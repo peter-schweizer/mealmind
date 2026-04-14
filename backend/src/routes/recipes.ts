@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import db from '../db';
+import { query, queryOne } from '../db';
 import { getSuggestions } from '../services/suggestionEngine';
 import { scrapeGeneric } from '../scrapers/generic';
 import { scrapeChefkoch } from '../scrapers/chefkoch';
@@ -19,36 +19,29 @@ interface RawRecipe {
   prep_time: number;
   cook_time: number;
   servings: number;
-  dietary_tags: string;
-  ingredients: string;
-  instructions: string;
+  dietary_tags: string[];     // JSONB — already parsed by pg
+  ingredients: unknown[];     // JSONB
+  instructions: string[];     // JSONB
   rating: number | null;
   notes: string;
-  is_custom: number;
-  created_at: string;
+  is_custom: boolean;
+  created_at: Date;
 }
 
-function parseRecipe(raw: RawRecipe) {
+function serializeRecipe(raw: RawRecipe) {
   return {
     ...raw,
-    dietary_tags: safeJson(raw.dietary_tags, []),
-    ingredients: safeJson(raw.ingredients, []),
-    instructions: safeJson(raw.instructions, []),
+    created_at: raw.created_at instanceof Date ? raw.created_at.toISOString() : String(raw.created_at),
   };
 }
 
-function safeJson<T>(value: string, fallback: T): T {
-  try { return JSON.parse(value) as T; } catch { return fallback; }
-}
-
 // ─── GET /api/recipes/suggestions ────────────────────────────────────────────
-// Must be before /:id route to avoid conflict
 
-router.get('/suggestions', (req: Request, res: Response) => {
+router.get('/suggestions', async (req: Request, res: Response) => {
   try {
     const count = parseInt(String(req.query['count'] || '10'), 10);
     const profileId = parseInt(String(req.query['profileId'] || '1'), 10);
-    const suggestions = getSuggestions(profileId, count);
+    const suggestions = await getSuggestions(profileId, count);
     res.json(suggestions);
   } catch (err: unknown) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
@@ -57,33 +50,34 @@ router.get('/suggestions', (req: Request, res: Response) => {
 
 // ─── GET /api/recipes ────────────────────────────────────────────────────────
 
-router.get('/', (req: Request, res: Response) => {
+router.get('/', async (req: Request, res: Response) => {
   try {
     const { search, tags, source, is_custom } = req.query;
 
-    let query = 'SELECT * FROM recipes WHERE 1=1';
+    let sql = 'SELECT * FROM recipes WHERE 1=1';
     const params: unknown[] = [];
+    let idx = 1;
 
     if (search) {
-      query += ' AND (title LIKE ? OR description LIKE ?)';
+      sql += ` AND (title ILIKE $${idx} OR description ILIKE $${idx + 1})`;
       params.push(`%${search}%`, `%${search}%`);
+      idx += 2;
     }
 
     if (source) {
-      query += ' AND source_name = ?';
+      sql += ` AND source_name = $${idx++}`;
       params.push(source);
     }
 
     if (is_custom !== undefined) {
-      query += ' AND is_custom = ?';
-      params.push(is_custom === 'true' || is_custom === '1' ? 1 : 0);
+      sql += ` AND is_custom = $${idx++}`;
+      params.push(is_custom === 'true' || is_custom === '1');
     }
 
-    query += ' ORDER BY created_at DESC';
+    sql += ' ORDER BY created_at DESC';
 
-    let recipes = (db.prepare(query).all(...params) as RawRecipe[]).map(parseRecipe);
+    let recipes = (await query<RawRecipe>(sql, params)).map(serializeRecipe);
 
-    // Filter by tags (all specified tags must be present)
     if (tags) {
       const tagList = String(tags).split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
       if (tagList.length > 0) {
@@ -103,11 +97,11 @@ router.get('/', (req: Request, res: Response) => {
 
 // ─── GET /api/recipes/:id ─────────────────────────────────────────────────────
 
-router.get('/:id', (req: Request, res: Response) => {
+router.get('/:id', async (req: Request, res: Response) => {
   try {
-    const raw = db.prepare('SELECT * FROM recipes WHERE id = ?').get(req.params['id']) as RawRecipe | undefined;
+    const raw = await queryOne<RawRecipe>('SELECT * FROM recipes WHERE id = $1', [req.params['id']]);
     if (!raw) return res.status(404).json({ error: 'Recipe not found' });
-    res.json(parseRecipe(raw));
+    res.json(serializeRecipe(raw));
   } catch (err: unknown) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
   }
@@ -115,7 +109,7 @@ router.get('/:id', (req: Request, res: Response) => {
 
 // ─── POST /api/recipes ────────────────────────────────────────────────────────
 
-router.post('/', (req: Request, res: Response) => {
+router.post('/', async (req: Request, res: Response) => {
   try {
     const {
       title, description = '', image_url = '', source_url = '', source_name = '',
@@ -131,20 +125,20 @@ router.post('/', (req: Request, res: Response) => {
 
     if (!title) return res.status(400).json({ error: 'title is required' });
 
-    const result = db.prepare(`
+    const [created] = await query<RawRecipe>(`
       INSERT INTO recipes
         (title, description, image_url, source_url, source_name, prep_time, cook_time, servings,
          dietary_tags, ingredients, instructions, rating, notes, is_custom)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-    `).run(
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,TRUE)
+      RETURNING *
+    `, [
       title, description, image_url, source_url, source_name,
       prep_time, cook_time, servings,
       JSON.stringify(dietary_tags), JSON.stringify(ingredients), JSON.stringify(instructions),
       rating, notes,
-    );
+    ]);
 
-    const created = db.prepare('SELECT * FROM recipes WHERE id = ?').get(result.lastInsertRowid) as RawRecipe;
-    res.status(201).json(parseRecipe(created));
+    res.status(201).json(serializeRecipe(created));
   } catch (err: unknown) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
   }
@@ -152,9 +146,9 @@ router.post('/', (req: Request, res: Response) => {
 
 // ─── PUT /api/recipes/:id ─────────────────────────────────────────────────────
 
-router.put('/:id', (req: Request, res: Response) => {
+router.put('/:id', async (req: Request, res: Response) => {
   try {
-    const existing = db.prepare('SELECT * FROM recipes WHERE id = ?').get(req.params['id']) as RawRecipe | undefined;
+    const existing = await queryOne<RawRecipe>('SELECT * FROM recipes WHERE id = $1', [req.params['id']]);
     if (!existing) return res.status(404).json({ error: 'Recipe not found' });
 
     const {
@@ -178,25 +172,25 @@ router.put('/:id', (req: Request, res: Response) => {
       rating: number | null; notes: string;
     }>;
 
-    db.prepare(`
+    const [updated] = await query<RawRecipe>(`
       UPDATE recipes SET
-        title = ?, description = ?, image_url = ?, source_url = ?, source_name = ?,
-        prep_time = ?, cook_time = ?, servings = ?,
-        dietary_tags = ?, ingredients = ?, instructions = ?,
-        rating = ?, notes = ?
-      WHERE id = ?
-    `).run(
+        title=$1, description=$2, image_url=$3, source_url=$4, source_name=$5,
+        prep_time=$6, cook_time=$7, servings=$8,
+        dietary_tags=$9, ingredients=$10, instructions=$11,
+        rating=$12, notes=$13
+      WHERE id=$14
+      RETURNING *
+    `, [
       title, description, image_url, source_url, source_name,
       prep_time, cook_time, servings,
-      JSON.stringify(dietary_tags ?? safeJson(existing.dietary_tags, [])),
-      JSON.stringify(ingredients ?? safeJson(existing.ingredients, [])),
-      JSON.stringify(instructions ?? safeJson(existing.instructions, [])),
+      JSON.stringify(dietary_tags ?? existing.dietary_tags),
+      JSON.stringify(ingredients ?? existing.ingredients),
+      JSON.stringify(instructions ?? existing.instructions),
       rating, notes,
       req.params['id'],
-    );
+    ]);
 
-    const updated = db.prepare('SELECT * FROM recipes WHERE id = ?').get(req.params['id']) as RawRecipe;
-    res.json(parseRecipe(updated));
+    res.json(serializeRecipe(updated));
   } catch (err: unknown) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
   }
@@ -204,11 +198,11 @@ router.put('/:id', (req: Request, res: Response) => {
 
 // ─── DELETE /api/recipes/:id ──────────────────────────────────────────────────
 
-router.delete('/:id', (req: Request, res: Response) => {
+router.delete('/:id', async (req: Request, res: Response) => {
   try {
-    const existing = db.prepare('SELECT id FROM recipes WHERE id = ?').get(req.params['id']);
+    const existing = await queryOne<{ id: number }>('SELECT id FROM recipes WHERE id = $1', [req.params['id']]);
     if (!existing) return res.status(404).json({ error: 'Recipe not found' });
-    db.prepare('DELETE FROM recipes WHERE id = ?').run(req.params['id']);
+    await query('DELETE FROM recipes WHERE id = $1', [req.params['id']]);
     res.json({ success: true });
   } catch (err: unknown) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
@@ -217,24 +211,21 @@ router.delete('/:id', (req: Request, res: Response) => {
 
 // ─── POST /api/recipes/:id/rate ───────────────────────────────────────────────
 
-router.post('/:id/rate', (req: Request, res: Response) => {
+router.post('/:id/rate', async (req: Request, res: Response) => {
   try {
     const { rating, notes } = req.body as { rating?: number; notes?: string };
-    const existing = db.prepare('SELECT * FROM recipes WHERE id = ?').get(req.params['id']) as RawRecipe | undefined;
+    const existing = await queryOne<RawRecipe>('SELECT * FROM recipes WHERE id = $1', [req.params['id']]);
     if (!existing) return res.status(404).json({ error: 'Recipe not found' });
 
     if (rating !== undefined && (rating < 0 || rating > 5)) {
       return res.status(400).json({ error: 'Rating must be between 0 and 5' });
     }
 
-    db.prepare('UPDATE recipes SET rating = ?, notes = ? WHERE id = ?').run(
-      rating ?? existing.rating,
-      notes ?? existing.notes,
-      req.params['id'],
+    const [updated] = await query<RawRecipe>(
+      'UPDATE recipes SET rating=$1, notes=$2 WHERE id=$3 RETURNING *',
+      [rating ?? existing.rating, notes ?? existing.notes, req.params['id']],
     );
-
-    const updated = db.prepare('SELECT * FROM recipes WHERE id = ?').get(req.params['id']) as RawRecipe;
-    res.json(parseRecipe(updated));
+    res.json(serializeRecipe(updated));
   } catch (err: unknown) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
   }
@@ -248,26 +239,21 @@ router.post('/scrape', async (req: Request, res: Response) => {
     if (!url) return res.status(400).json({ error: 'url is required' });
 
     let scraped;
-    if (url.includes('chefkoch.de')) {
-      scraped = await scrapeChefkoch(url);
-    } else if (url.includes('rewe.de')) {
-      scraped = await scrapeRewe(url);
-    } else {
-      scraped = await scrapeGeneric(url);
-    }
+    if (url.includes('chefkoch.de')) scraped = await scrapeChefkoch(url);
+    else if (url.includes('rewe.de')) scraped = await scrapeRewe(url);
+    else scraped = await scrapeGeneric(url);
 
-    // Check if recipe with this URL already exists
-    const existing = db.prepare('SELECT id FROM recipes WHERE source_url = ?').get(url) as { id: number } | undefined;
+    const existing = await queryOne<{ id: number }>('SELECT id FROM recipes WHERE source_url = $1', [url]);
 
     if (existing) {
-      // Update existing
-      db.prepare(`
+      const [updated] = await query<RawRecipe>(`
         UPDATE recipes SET
-          title = ?, description = ?, image_url = ?, source_name = ?,
-          prep_time = ?, cook_time = ?, servings = ?,
-          dietary_tags = ?, ingredients = ?, instructions = ?
-        WHERE source_url = ?
-      `).run(
+          title=$1, description=$2, image_url=$3, source_name=$4,
+          prep_time=$5, cook_time=$6, servings=$7,
+          dietary_tags=$8, ingredients=$9, instructions=$10
+        WHERE source_url=$11
+        RETURNING *
+      `, [
         scraped.title, scraped.description, scraped.image_url,
         source_name || scraped.title,
         scraped.prep_time, scraped.cook_time, scraped.servings,
@@ -275,28 +261,26 @@ router.post('/scrape', async (req: Request, res: Response) => {
         JSON.stringify(scraped.ingredients),
         JSON.stringify(scraped.instructions),
         url,
-      );
-      const updated = db.prepare('SELECT * FROM recipes WHERE source_url = ?').get(url) as RawRecipe;
-      return res.json(parseRecipe(updated));
+      ]);
+      return res.json(serializeRecipe(updated));
     }
 
-    // Insert new
-    const result = db.prepare(`
+    const [created] = await query<RawRecipe>(`
       INSERT INTO recipes
         (title, description, image_url, source_url, source_name, prep_time, cook_time, servings,
          dietary_tags, ingredients, instructions, is_custom)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-    `).run(
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,FALSE)
+      RETURNING *
+    `, [
       scraped.title, scraped.description, scraped.image_url, url,
       source_name || '',
       scraped.prep_time, scraped.cook_time, scraped.servings,
       JSON.stringify(scraped.dietary_tags),
       JSON.stringify(scraped.ingredients),
       JSON.stringify(scraped.instructions),
-    );
+    ]);
 
-    const created = db.prepare('SELECT * FROM recipes WHERE id = ?').get(result.lastInsertRowid) as RawRecipe;
-    res.status(201).json(parseRecipe(created));
+    res.status(201).json(serializeRecipe(created));
   } catch (err: unknown) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Scraping failed' });
   }

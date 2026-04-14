@@ -1,43 +1,33 @@
 import { Router, Request, Response } from 'express';
-import db from '../db';
+import { query, queryOne } from '../db';
 
 const router = Router();
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 interface RawProfile {
   id: number;
   name: string;
-  dietary_preferences: string;
-  dislikes: string;
-  allergies: string;
+  dietary_preferences: string[];   // JSONB
+  dislikes: string[];
+  allergies: string[];
   household_size: number;
-  pantry_staples: string;
-  owned_ingredients: string;
+  pantry_staples: string[];
+  owned_ingredients: string[];
 }
 
-function parseProfile(raw: RawProfile) {
-  return {
-    ...raw,
-    dietary_preferences: safeJson<string[]>(raw.dietary_preferences, []),
-    dislikes: safeJson<string[]>(raw.dislikes, []),
-    allergies: safeJson<string[]>(raw.allergies, []),
-    pantry_staples: safeJson<string[]>(raw.pantry_staples, []),
-    owned_ingredients: safeJson<string[]>(raw.owned_ingredients, []),
-  };
-}
-
-function safeJson<T>(value: string, fallback: T): T {
-  try { return JSON.parse(value) as T; } catch { return fallback; }
+// JSONB columns are already parsed by pg — no safeJson needed
+function serializeProfile(raw: RawProfile) {
+  return { ...raw };
 }
 
 // ─── GET /api/profile ─────────────────────────────────────────────────────────
 
-router.get('/', (_req: Request, res: Response) => {
+router.get('/', async (_req: Request, res: Response) => {
   try {
-    const raw = db.prepare('SELECT * FROM user_profile WHERE id = 1').get() as RawProfile | undefined;
+    const raw = await queryOne<RawProfile>('SELECT * FROM user_profile WHERE id = 1');
     if (!raw) return res.status(404).json({ error: 'Profile not found' });
-    res.json(parseProfile(raw));
+    res.json(serializeProfile(raw));
   } catch (err: unknown) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
   }
@@ -45,9 +35,9 @@ router.get('/', (_req: Request, res: Response) => {
 
 // ─── PUT /api/profile ─────────────────────────────────────────────────────────
 
-router.put('/', (req: Request, res: Response) => {
+router.put('/', async (req: Request, res: Response) => {
   try {
-    const existing = db.prepare('SELECT * FROM user_profile WHERE id = 1').get() as RawProfile | undefined;
+    const existing = await queryOne<RawProfile>('SELECT * FROM user_profile WHERE id = 1');
     if (!existing) return res.status(404).json({ error: 'Profile not found' });
 
     const {
@@ -68,80 +58,71 @@ router.put('/', (req: Request, res: Response) => {
       owned_ingredients: string[];
     }>;
 
-    db.prepare(`
+    const [updated] = await query<RawProfile>(`
       UPDATE user_profile SET
-        name = ?,
-        dietary_preferences = ?,
-        dislikes = ?,
-        allergies = ?,
-        household_size = ?,
-        pantry_staples = ?,
-        owned_ingredients = ?
-      WHERE id = 1
-    `).run(
+        name=$1, dietary_preferences=$2, dislikes=$3, allergies=$4,
+        household_size=$5, pantry_staples=$6, owned_ingredients=$7
+      WHERE id=1
+      RETURNING *
+    `, [
       name,
-      JSON.stringify(dietary_preferences ?? safeJson<string[]>(existing.dietary_preferences, [])),
-      JSON.stringify(dislikes ?? safeJson<string[]>(existing.dislikes, [])),
-      JSON.stringify(allergies ?? safeJson<string[]>(existing.allergies, [])),
+      JSON.stringify(dietary_preferences ?? existing.dietary_preferences),
+      JSON.stringify(dislikes ?? existing.dislikes),
+      JSON.stringify(allergies ?? existing.allergies),
       household_size,
-      JSON.stringify(pantry_staples ?? safeJson<string[]>(existing.pantry_staples, [])),
-      JSON.stringify(owned_ingredients ?? safeJson<string[]>(existing.owned_ingredients, [])),
-    );
+      JSON.stringify(pantry_staples ?? existing.pantry_staples),
+      JSON.stringify(owned_ingredients ?? existing.owned_ingredients),
+    ]);
 
-    const updated = db.prepare('SELECT * FROM user_profile WHERE id = 1').get() as RawProfile;
-    res.json(parseProfile(updated));
+    res.json(serializeProfile(updated));
   } catch (err: unknown) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
   }
 });
 
 // ─── POST /api/profile/pantry ─────────────────────────────────────────────────
-// Replace the pantry staples list
 
-router.post('/pantry', (req: Request, res: Response) => {
+router.post('/pantry', async (req: Request, res: Response) => {
   try {
     const { pantry_staples } = req.body as { pantry_staples?: string[] };
     if (!Array.isArray(pantry_staples)) {
       return res.status(400).json({ error: 'pantry_staples must be an array of strings' });
     }
 
-    db.prepare('UPDATE user_profile SET pantry_staples = ? WHERE id = 1')
-      .run(JSON.stringify(pantry_staples));
-
-    const updated = db.prepare('SELECT * FROM user_profile WHERE id = 1').get() as RawProfile;
-    res.json(parseProfile(updated));
+    const [updated] = await query<RawProfile>(
+      'UPDATE user_profile SET pantry_staples=$1 WHERE id=1 RETURNING *',
+      [JSON.stringify(pantry_staples)],
+    );
+    res.json(serializeProfile(updated));
   } catch (err: unknown) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
   }
 });
 
 // ─── POST /api/profile/owned ──────────────────────────────────────────────────
-// Toggle an ingredient in the owned_ingredients list
 
-router.post('/owned', (req: Request, res: Response) => {
+router.post('/owned', async (req: Request, res: Response) => {
   try {
     const { ingredient } = req.body as { ingredient?: string };
     if (!ingredient) {
       return res.status(400).json({ error: 'ingredient is required' });
     }
 
-    const raw = db.prepare('SELECT owned_ingredients FROM user_profile WHERE id = 1').get() as Pick<RawProfile, 'owned_ingredients'> | undefined;
+    const raw = await queryOne<{ owned_ingredients: string[] }>(
+      'SELECT owned_ingredients FROM user_profile WHERE id = 1',
+    );
     if (!raw) return res.status(404).json({ error: 'Profile not found' });
 
-    const owned: string[] = safeJson<string[]>(raw.owned_ingredients, []);
+    const owned: string[] = Array.isArray(raw.owned_ingredients) ? raw.owned_ingredients : [];
     const idx = owned.findIndex(o => o.toLowerCase() === ingredient.toLowerCase());
+    if (idx >= 0) owned.splice(idx, 1);
+    else owned.push(ingredient);
 
-    if (idx >= 0) {
-      owned.splice(idx, 1); // remove
-    } else {
-      owned.push(ingredient); // add
-    }
-
-    db.prepare('UPDATE user_profile SET owned_ingredients = ? WHERE id = 1')
-      .run(JSON.stringify(owned));
-
-    const updated = db.prepare('SELECT * FROM user_profile WHERE id = 1').get() as RawProfile;
-    res.json(parseProfile(updated));
+    const [updated] = await query<RawProfile>(
+      'UPDATE user_profile SET owned_ingredients=$1 WHERE id=1 RETURNING *',
+      [JSON.stringify(owned)],
+    );
+    res.json(serializeProfile(updated));
   } catch (err: unknown) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
   }
