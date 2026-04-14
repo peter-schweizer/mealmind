@@ -8,6 +8,10 @@ import plannerRouter from './routes/planner';
 import sourcesRouter from './routes/sources';
 import { initDb } from './db';
 
+// ─── DB init — starts immediately, awaited by middleware before first request ──
+
+const dbReady = initDb();
+
 // ─── App setup ────────────────────────────────────────────────────────────────
 
 const app = express();
@@ -29,6 +33,11 @@ app.use(cors({
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// Gate all requests until DB schema/seed is ready
+app.use((_req, _res, next) => {
+  dbReady.then(() => next()).catch(next);
+});
 
 app.use((req, _res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
@@ -55,36 +64,23 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
   res.status(500).json({ error: err.message || 'Internal server error' });
 });
 
-// ─── Startup ──────────────────────────────────────────────────────────────────
+// ─── Local startup only (skipped on Vercel) ───────────────────────────────────
 
-async function start() {
-  try {
-    await initDb();
+if (!process.env['VERCEL']) {
+  dbReady.then(() => {
     app.listen(PORT, () => {
-      printBanner();
-      console.log(`\n  Server running on http://localhost:${PORT}`);
-      console.log(`  API base:    http://localhost:${PORT}/api`);
-      console.log(`  Health:      http://localhost:${PORT}/api/health`);
-      console.log(`  Frontend:    http://localhost:5173\n`);
+      console.log('\x1b[32m');
+      console.log('  ╔════════════════════════════════════════╗');
+      console.log('  ║   🍽  MealMind API  v1.0.0              ║');
+      console.log('  ║   Node.js / Express / Neon PostgreSQL  ║');
+      console.log('  ╚════════════════════════════════════════╝');
+      console.log('\x1b[0m');
+      console.log(`  Server: http://localhost:${PORT}/api\n`);
     });
-  } catch (err) {
-    console.error('Failed to initialize database:', err);
+  }).catch((err) => {
+    console.error('Failed to start:', err);
     process.exit(1);
-  }
+  });
 }
 
-function printBanner(): void {
-  console.log('\x1b[32m');
-  console.log('  ╔═══════════════════════════════════════╗');
-  console.log('  ║                                       ║');
-  console.log('  ║   🍽  MealMind API  v1.0.0             ║');
-  console.log('  ║                                       ║');
-  console.log('  ║   Node.js / Express / TypeScript      ║');
-  console.log('  ║   Neon PostgreSQL                     ║');
-  console.log('  ║                                       ║');
-  console.log('  ╚═══════════════════════════════════════╝');
-  console.log('\x1b[0m');
-}
-
-start();
 export default app;
