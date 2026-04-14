@@ -1,0 +1,214 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Base ───────────────────────────────────────────────────────────────── */
+
+@layer base {
+  html {
+    font-family: 'Source Sans 3', system-ui, sans-serif;
+    background-color: #FAF7F2;
+    color: #1a2e27;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Playfair Display', Georgia, serif;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+}
+
+/* ─── Paper Card Texture ─────────────────────────────────────────────────── */
+
+@layer components {
+  .paper-card {
+    background-color: #E8D5B7;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+    box-shadow:
+      0 1px 3px rgba(45, 74, 62, 0.08),
+      0 4px 16px rgba(45, 74, 62, 0.06),
+      inset 0 1px 0 rgba(255, 255, 255, 0.55),
+      inset 0 -1px 0 rgba(45, 74, 62, 0.06);
+    border-radius: 12px;
+  }
+
+  .paper-card-white {
+    background-color: #FDFAF6;
+    box-shadow:
+      0 1px 3px rgba(45, 74, 62, 0.08),
+      0 4px 20px rgba(45, 74, 62, 0.07),
+      inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    border-radius: 12px;
+  }
+}
+
+/* ─── Recipe Card Hover ──────────────────────────────────────────────────── */
+
+.recipe-card {
+  transition: transform 0.22s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+    box-shadow 0.22s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.recipe-card:hover {
+  transform: translateY(-3px);
+  box-shadow:
+    0 4px 8px rgba(45, 74, 62, 0.12),
+    0 12px 32px rgba(45, 74, 62, 0.10),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+/* ─── Ingredient Strikethrough ───────────────────────────────────────────── */
+
+.ingredient-done {
+  text-decoration: line-through;
+  color: #9ca3af;
+  transition: all 0.3s ease;
+}
+
+.ingredient-done .ingredient-text {
+  text-decoration: line-through;
+}
+
+/* ─── Scrollbar Styling ──────────────────────────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #C4B49A;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #A89878;
+}
+
+/* ─── Sidebar Scrollbar ──────────────────────────────────────────────────── */
+
+.sidebar-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 2px;
+}
+
+/* ─── Custom Tag Input ───────────────────────────────────────────────────── */
+
+.tag-input-container input::placeholder {
+  color: #9ca3af;
+  font-style: italic;
+}
+
+/* ─── Match Score Bar ────────────────────────────────────────────────────── */
+
+.match-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: #D4BC96;
+  overflow: hidden;
+}
+
+.match-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #2D4A3E, #3D6354);
+  transition: width 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+/* ─── Planner Grid ───────────────────────────────────────────────────────── */
+
+.planner-cell {
+  min-height: 80px;
+  transition: background-color 0.15s ease;
+}
+
+.planner-cell:hover {
+  background-color: rgba(232, 213, 183, 0.4);
+}
+
+.planner-cell-filled {
+  cursor: pointer;
+}
+
+/* ─── Star Rating ────────────────────────────────────────────────────────── */
+
+.star-btn {
+  transition: transform 0.15s ease, color 0.15s ease;
+}
+
+.star-btn:hover {
+  transform: scale(1.2);
+}
+
+/* ─── Horizontal scroll strip ───────────────────────────────────────────── */
+
+.scroll-strip {
+  scrollbar-width: thin;
+  scrollbar-color: #C4B49A transparent;
+}
+
+.scroll-strip::-webkit-scrollbar {
+  height: 4px;
+}
+
+.scroll-strip::-webkit-scrollbar-thumb {
+  background: #C4B49A;
+  border-radius: 2px;
+}
+
+/* ─── Focus ring override ────────────────────────────────────────────────── */
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  ring-color: #2D4A3E;
+}
+
+/* ─── Toggle switch ──────────────────────────────────────────────────────── */
+
+.toggle-track {
+  transition: background-color 0.2s ease;
+}
+
+.toggle-thumb {
+  transition: transform 0.2s ease;
+}
+
+/* ─── Modal backdrop ─────────────────────────────────────────────────────── */
+
+.modal-backdrop {
+  animation: backdropFadeIn 0.2s ease-out;
+}
+
+@keyframes backdropFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.modal-content {
+  animation: modalSlideIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes modalSlideIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
