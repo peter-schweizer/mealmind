@@ -8,7 +8,6 @@ import {
   X,
   Search,
   Loader2,
-  Trash2,
   Calendar,
 } from 'lucide-react'
 import {

@@ -109,12 +109,8 @@ export default function RecipeModal({ recipe, onClose, onSaved }: RecipeModalPro
   const handleAddToBook = async () => {
     setAddingToBook(true)
     try {
-      await createRecipe({
-        ...recipe,
-        is_custom: true,
-        id: undefined as unknown as number,
-        created_at: undefined as unknown as string,
-      })
+      const { id: _id, created_at: _ca, ...recipeData } = recipe
+      await createRecipe({ ...recipeData, is_custom: true })
       setSaved(true)
       onSaved?.()
     } finally {

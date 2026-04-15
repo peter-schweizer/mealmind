@@ -11,7 +11,7 @@ import {
   ChevronRight,
 } from 'lucide-react'
 import type { ShoppingItem, WeekPlan } from '../types'
-import { getShoppingList, getIcal, getPlans, toggleOwned } from '../api'
+import { getShoppingList, getIcal, getPlans } from '../api'
 
 const CATEGORY_ORDER = [
   'Gemüse',
@@ -182,14 +182,6 @@ export default function Shopping() {
       else next.add(key)
       return next
     })
-  }
-
-  const handleToggleOwned = async (ingredient: string) => {
-    await toggleOwned(ingredient)
-    if (activePlanId) {
-      const fresh = await getShoppingList(activePlanId)
-      setItems(fresh)
-    }
   }
 
   // Group by category

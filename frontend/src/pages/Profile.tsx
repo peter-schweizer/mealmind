@@ -73,7 +73,7 @@ function TagInput({ label, tags, onChange, placeholder = 'Eingabe + Enter' }: Ta
 // ─── Main Profile Page ─────────────────────────────────────────────────────
 
 export default function Profile() {
-  const [profile, setProfile] = useState<UserProfile | null>(null)
+  const [_profile, setProfile] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [savingPantry, setSavingPantry] = useState(false)
