@@ -34,7 +34,13 @@ app.use(cors({
   credentials: true,
 }));
 
-app.use(clerkMiddleware());
+// Only activate Clerk middleware when the secret key is configured.
+// Without it, clerkMiddleware() throws on every request and breaks all routes.
+if (process.env['CLERK_SECRET_KEY']) {
+  app.use(clerkMiddleware());
+} else {
+  console.warn('[auth] CLERK_SECRET_KEY not set — auth middleware disabled');
+}
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -57,7 +63,13 @@ app.use('/api/sources', sourcesRouter);
 app.use('/api/search', searchRouter);
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '1.0.0', db: 'neon-postgres' });
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    version: '1.1.0',
+    db: 'neon-postgres',
+    auth: process.env['CLERK_SECRET_KEY'] ? 'clerk-active' : 'clerk-missing',
+  });
 });
 
 app.use((_req, res) => {
