@@ -10,7 +10,7 @@ import Profile from './pages/Profile'
 import Sources from './pages/Sources'
 import { setTokenGetter } from './api'
 
-// Syncs the Clerk session token into the Axios instance
+// Syncs the Clerk session token into the Axios instance (only when logged in)
 function AuthSync() {
   const { getToken } = useAuth()
   useEffect(() => {
@@ -19,27 +19,37 @@ function AuthSync() {
   return null
 }
 
-export default function App() {
+// Wraps a route so unauthenticated users are redirected to sign-in
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return (
     <>
+      <SignedIn>{children}</SignedIn>
+      <SignedOut><RedirectToSignIn /></SignedOut>
+    </>
+  )
+}
+
+export default function App() {
+  return (
+    <Layout>
       <SignedIn>
         <AuthSync />
-        <Layout>
-          <Routes>
-            <Route path="/" element={<Navigate to="/discover" replace />} />
-            <Route path="/discover" element={<Discover />} />
-            <Route path="/my-recipes" element={<MyRecipes />} />
-            <Route path="/planner" element={<Planner />} />
-            <Route path="/shopping" element={<Shopping />} />
-            <Route path="/profile" element={<Profile />} />
-            <Route path="/sources" element={<Sources />} />
-            <Route path="*" element={<Navigate to="/discover" replace />} />
-          </Routes>
-        </Layout>
       </SignedIn>
-      <SignedOut>
-        <RedirectToSignIn />
-      </SignedOut>
-    </>
+      <Routes>
+        <Route path="/" element={<Navigate to="/discover" replace />} />
+
+        {/* Public — visible without login */}
+        <Route path="/discover" element={<Discover />} />
+
+        {/* Protected — require login */}
+        <Route path="/my-recipes" element={<ProtectedRoute><MyRecipes /></ProtectedRoute>} />
+        <Route path="/planner"    element={<ProtectedRoute><Planner /></ProtectedRoute>} />
+        <Route path="/shopping"   element={<ProtectedRoute><Shopping /></ProtectedRoute>} />
+        <Route path="/profile"    element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+        <Route path="/sources"    element={<ProtectedRoute><Sources /></ProtectedRoute>} />
+
+        <Route path="*" element={<Navigate to="/discover" replace />} />
+      </Routes>
+    </Layout>
   )
 }

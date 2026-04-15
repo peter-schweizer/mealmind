@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { UserButton, useUser } from '@clerk/clerk-react'
+import { UserButton, SignInButton, SignedIn, SignedOut, useUser } from '@clerk/clerk-react'
 import {
   Compass,
   BookOpen,
@@ -86,23 +86,29 @@ export default function Sidebar() {
 
       {/* User / Account section */}
       <div className="px-4 py-4 border-t border-primary-light/20">
-        <div className="flex items-center gap-3">
-          <UserButton
-            appearance={{
-              elements: {
-                avatarBox: 'w-8 h-8',
-              },
-            }}
-          />
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-white/90 truncate">
-              {user?.firstName ?? user?.emailAddresses[0]?.emailAddress ?? 'Konto'}
-            </p>
-            <p className="text-xs text-white/40 truncate">
-              {user?.emailAddresses[0]?.emailAddress ?? ''}
-            </p>
+        <SignedIn>
+          <div className="flex items-center gap-3">
+            <UserButton
+              appearance={{ elements: { avatarBox: 'w-8 h-8' } }}
+            />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-white/90 truncate">
+                {user?.firstName ?? user?.emailAddresses[0]?.emailAddress ?? 'Konto'}
+              </p>
+              <p className="text-xs text-white/40 truncate">
+                {user?.emailAddresses[0]?.emailAddress ?? ''}
+              </p>
+            </div>
           </div>
-        </div>
+        </SignedIn>
+        <SignedOut>
+          <SignInButton mode="modal">
+            <button className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white/80 hover:text-white text-sm font-medium transition-all duration-150">
+              <User size={16} />
+              Anmelden
+            </button>
+          </SignInButton>
+        </SignedOut>
       </div>
     </aside>
   )
