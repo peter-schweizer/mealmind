@@ -1,14 +1,19 @@
-import { Router, Request, Response } from 'express';
+import { Router, Response } from 'express';
 import { query, queryOne } from '../db';
+import { requireAuth, AuthRequest } from '../middleware/requireAuth';
 
 const router = Router();
+
+// All profile routes require authentication
+router.use(requireAuth);
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface RawProfile {
   id: number;
+  clerk_user_id: string;
   name: string;
-  dietary_preferences: string[];   // JSONB
+  dietary_preferences: string[];
   dislikes: string[];
   allergies: string[];
   household_size: number;
@@ -16,16 +21,19 @@ interface RawProfile {
   owned_ingredients: string[];
 }
 
-// JSONB columns are already parsed by pg — no safeJson needed
 function serializeProfile(raw: RawProfile) {
   return { ...raw };
 }
 
 // ─── GET /api/profile ─────────────────────────────────────────────────────────
 
-router.get('/', async (_req: Request, res: Response) => {
+router.get('/', async (req, res: Response) => {
+  const { userId } = req;
   try {
-    const raw = await queryOne<RawProfile>('SELECT * FROM user_profile WHERE id = 1');
+    const raw = await queryOne<RawProfile>(
+      'SELECT * FROM user_profile WHERE clerk_user_id = $1',
+      [userId],
+    );
     if (!raw) return res.status(404).json({ error: 'Profile not found' });
     res.json(serializeProfile(raw));
   } catch (err: unknown) {
@@ -35,9 +43,13 @@ router.get('/', async (_req: Request, res: Response) => {
 
 // ─── PUT /api/profile ─────────────────────────────────────────────────────────
 
-router.put('/', async (req: Request, res: Response) => {
+router.put('/', async (req, res: Response) => {
+  const { userId } = req;
   try {
-    const existing = await queryOne<RawProfile>('SELECT * FROM user_profile WHERE id = 1');
+    const existing = await queryOne<RawProfile>(
+      'SELECT * FROM user_profile WHERE clerk_user_id = $1',
+      [userId],
+    );
     if (!existing) return res.status(404).json({ error: 'Profile not found' });
 
     const {
@@ -62,7 +74,7 @@ router.put('/', async (req: Request, res: Response) => {
       UPDATE user_profile SET
         name=$1, dietary_preferences=$2, dislikes=$3, allergies=$4,
         household_size=$5, pantry_staples=$6, owned_ingredients=$7
-      WHERE id=1
+      WHERE clerk_user_id=$8
       RETURNING *
     `, [
       name,
@@ -72,6 +84,7 @@ router.put('/', async (req: Request, res: Response) => {
       household_size,
       JSON.stringify(pantry_staples ?? existing.pantry_staples),
       JSON.stringify(owned_ingredients ?? existing.owned_ingredients),
+      userId,
     ]);
 
     res.json(serializeProfile(updated));
@@ -82,7 +95,8 @@ router.put('/', async (req: Request, res: Response) => {
 
 // ─── POST /api/profile/pantry ─────────────────────────────────────────────────
 
-router.post('/pantry', async (req: Request, res: Response) => {
+router.post('/pantry', async (req, res: Response) => {
+  const { userId } = req;
   try {
     const { pantry_staples } = req.body as { pantry_staples?: string[] };
     if (!Array.isArray(pantry_staples)) {
@@ -90,8 +104,8 @@ router.post('/pantry', async (req: Request, res: Response) => {
     }
 
     const [updated] = await query<RawProfile>(
-      'UPDATE user_profile SET pantry_staples=$1 WHERE id=1 RETURNING *',
-      [JSON.stringify(pantry_staples)],
+      'UPDATE user_profile SET pantry_staples=$1 WHERE clerk_user_id=$2 RETURNING *',
+      [JSON.stringify(pantry_staples), userId],
     );
     res.json(serializeProfile(updated));
   } catch (err: unknown) {
@@ -101,7 +115,8 @@ router.post('/pantry', async (req: Request, res: Response) => {
 
 // ─── POST /api/profile/owned ──────────────────────────────────────────────────
 
-router.post('/owned', async (req: Request, res: Response) => {
+router.post('/owned', async (req, res: Response) => {
+  const { userId } = req;
   try {
     const { ingredient } = req.body as { ingredient?: string };
     if (!ingredient) {
@@ -109,7 +124,8 @@ router.post('/owned', async (req: Request, res: Response) => {
     }
 
     const raw = await queryOne<{ owned_ingredients: string[] }>(
-      'SELECT owned_ingredients FROM user_profile WHERE id = 1',
+      'SELECT owned_ingredients FROM user_profile WHERE clerk_user_id = $1',
+      [userId],
     );
     if (!raw) return res.status(404).json({ error: 'Profile not found' });
 
@@ -119,8 +135,8 @@ router.post('/owned', async (req: Request, res: Response) => {
     else owned.push(ingredient);
 
     const [updated] = await query<RawProfile>(
-      'UPDATE user_profile SET owned_ingredients=$1 WHERE id=1 RETURNING *',
-      [JSON.stringify(owned)],
+      'UPDATE user_profile SET owned_ingredients=$1 WHERE clerk_user_id=$2 RETURNING *',
+      [JSON.stringify(owned), userId],
     );
     res.json(serializeProfile(updated));
   } catch (err: unknown) {

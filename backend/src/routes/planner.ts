@@ -1,9 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { query, queryOne, pool } from '../db';
-import { generateWeekPlan, getUserProfile } from '../services/suggestionEngine';
+import { generateWeekPlan, getUserProfileByClerkId } from '../services/suggestionEngine';
 import { generateShoppingList } from '../services/shoppingListGenerator';
+import { requireAuth, AuthRequest } from '../middleware/requireAuth';
 
 const router = Router();
+
+// All plan routes require authentication
+router.use(requireAuth);
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -74,9 +78,13 @@ function getMondayOfCurrentWeek(): string {
 
 // ─── GET /api/plans ───────────────────────────────────────────────────────────
 
-router.get('/', async (_req: Request, res: Response) => {
+router.get('/', async (req, res: Response) => {
+  const { userId } = req;
   try {
-    const plans = await query<RawPlan>('SELECT * FROM week_plans ORDER BY created_at DESC');
+    const plans = await query<RawPlan>(
+      'SELECT * FROM week_plans WHERE user_id = $1 ORDER BY created_at DESC',
+      [userId],
+    );
     res.json(plans.map(serializePlan));
   } catch (err: unknown) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
@@ -85,15 +93,16 @@ router.get('/', async (_req: Request, res: Response) => {
 
 // ─── POST /api/plans ──────────────────────────────────────────────────────────
 
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', async (req, res: Response) => {
+  const { userId } = req;
   try {
     const { name, week_start } = req.body as { name?: string; week_start?: string };
     const planName = name || `Wochenplan ${new Date().toLocaleDateString('de-DE')}`;
     const weekStart = week_start || getMondayOfCurrentWeek();
 
     const [created] = await query<RawPlan>(
-      'INSERT INTO week_plans (name, week_start) VALUES ($1, $2) RETURNING *',
-      [planName, weekStart],
+      'INSERT INTO week_plans (name, week_start, user_id) VALUES ($1, $2, $3) RETURNING *',
+      [planName, weekStart, userId],
     );
     res.status(201).json(serializePlan(created));
   } catch (err: unknown) {
@@ -103,9 +112,13 @@ router.post('/', async (req: Request, res: Response) => {
 
 // ─── GET /api/plans/:id ───────────────────────────────────────────────────────
 
-router.get('/:id', async (req: Request, res: Response) => {
+router.get('/:id', async (req, res: Response) => {
+  const { userId } = req;
   try {
-    const plan = await queryOne<RawPlan>('SELECT * FROM week_plans WHERE id = $1', [req.params['id']]);
+    const plan = await queryOne<RawPlan>(
+      'SELECT * FROM week_plans WHERE id = $1 AND user_id = $2',
+      [req.params['id'], userId],
+    );
     if (!plan) return res.status(404).json({ error: 'Plan not found' });
 
     const rawSlots = await query<RawSlot>(
@@ -121,9 +134,13 @@ router.get('/:id', async (req: Request, res: Response) => {
 
 // ─── PUT /api/plans/:id ───────────────────────────────────────────────────────
 
-router.put('/:id', async (req: Request, res: Response) => {
+router.put('/:id', async (req, res: Response) => {
+  const { userId } = req;
   try {
-    const plan = await queryOne<RawPlan>('SELECT * FROM week_plans WHERE id = $1', [req.params['id']]);
+    const plan = await queryOne<RawPlan>(
+      'SELECT * FROM week_plans WHERE id = $1 AND user_id = $2',
+      [req.params['id'], userId],
+    );
     if (!plan) return res.status(404).json({ error: 'Plan not found' });
 
     const { name = plan.name, week_start = plan.week_start } = req.body as { name?: string; week_start?: string };
@@ -139,9 +156,13 @@ router.put('/:id', async (req: Request, res: Response) => {
 
 // ─── DELETE /api/plans/:id ────────────────────────────────────────────────────
 
-router.delete('/:id', async (req: Request, res: Response) => {
+router.delete('/:id', async (req, res: Response) => {
+  const { userId } = req;
   try {
-    const plan = await queryOne<{ id: number }>('SELECT id FROM week_plans WHERE id = $1', [req.params['id']]);
+    const plan = await queryOne<{ id: number }>(
+      'SELECT id FROM week_plans WHERE id = $1 AND user_id = $2',
+      [req.params['id'], userId],
+    );
     if (!plan) return res.status(404).json({ error: 'Plan not found' });
     await query('DELETE FROM week_plans WHERE id = $1', [req.params['id']]);
     res.json({ success: true });
@@ -152,17 +173,20 @@ router.delete('/:id', async (req: Request, res: Response) => {
 
 // ─── POST /api/plans/:id/generate ────────────────────────────────────────────
 
-router.post('/:id/generate', async (req: Request, res: Response) => {
+router.post('/:id/generate', async (req, res: Response) => {
+  const { userId } = req;
   try {
-    const plan = await queryOne<RawPlan>('SELECT * FROM week_plans WHERE id = $1', [req.params['id']]);
+    const plan = await queryOne<RawPlan>(
+      'SELECT * FROM week_plans WHERE id = $1 AND user_id = $2',
+      [req.params['id'], userId],
+    );
     if (!plan) return res.status(404).json({ error: 'Plan not found' });
 
-    const profileId = parseInt(String(req.body?.['profileId'] || '1'), 10);
     const planId = parseInt(req.params['id'], 10);
 
     await query('DELETE FROM meal_slots WHERE plan_id = $1', [planId]);
 
-    const slots = await generateWeekPlan(profileId);
+    const slots = await generateWeekPlan(userId!);
 
     // Use a client for the transaction
     const client = await pool.connect();
@@ -283,13 +307,18 @@ router.delete('/:id/slots/:slotId', async (req: Request, res: Response) => {
 
 // ─── GET /api/plans/:id/shopping ─────────────────────────────────────────────
 
-router.get('/:id/shopping', async (req: Request, res: Response) => {
+router.get('/:id/shopping', async (req, res: Response) => {
+  const { userId } = req;
   try {
     const planId = parseInt(req.params['id'], 10);
-    const plan = await queryOne<{ id: number }>('SELECT id FROM week_plans WHERE id = $1', [planId]);
+    const plan = await queryOne<{ id: number }>(
+      'SELECT id FROM week_plans WHERE id = $1 AND user_id = $2',
+      [planId, userId],
+    );
     if (!plan) return res.status(404).json({ error: 'Plan not found' });
 
-    const profile = await getUserProfile(1);
+    const profile = await getUserProfileByClerkId(userId!);
+    if (!profile) return res.status(404).json({ error: 'Profile not found' });
     const hidePantry = req.query['hidePantry'] !== 'false';
     const householdSize = parseInt(String(req.query['householdSize'] || profile.household_size), 10);
 
@@ -302,10 +331,14 @@ router.get('/:id/shopping', async (req: Request, res: Response) => {
 
 // ─── GET /api/plans/:id/ical ──────────────────────────────────────────────────
 
-router.get('/:id/ical', async (req: Request, res: Response) => {
+router.get('/:id/ical', async (req, res: Response) => {
+  const { userId } = req;
   try {
     const planId = parseInt(req.params['id'], 10);
-    const plan = await queryOne<RawPlan>('SELECT * FROM week_plans WHERE id = $1', [planId]);
+    const plan = await queryOne<RawPlan>(
+      'SELECT * FROM week_plans WHERE id = $1 AND user_id = $2',
+      [planId, userId],
+    );
     if (!plan) return res.status(404).json({ error: 'Plan not found' });
 
     const rawSlots = await query<RawSlot>(

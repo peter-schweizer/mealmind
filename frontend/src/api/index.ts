@@ -14,6 +14,21 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+// Token getter is registered by AuthSync in App.tsx once Clerk is ready
+let _getToken: (() => Promise<string | null>) | null = null;
+
+export function setTokenGetter(fn: () => Promise<string | null>) {
+  _getToken = fn;
+}
+
+api.interceptors.request.use(async (config) => {
+  if (_getToken) {
+    const token = await _getToken();
+    if (token) config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
 // ─── Recipes ────────────────────────────────────────────────────────────────
 
 export interface RecipeParams {

@@ -30,6 +30,13 @@ export async function queryOne<T = Record<string, any>>(
 // ─── Schema + seed ────────────────────────────────────────────────────────────
 
 export async function initDb(): Promise<void> {
+  // ── Schema migrations (idempotent) ───────────────────────────────────────
+  await pool.query(`
+    ALTER TABLE user_profile ADD COLUMN IF NOT EXISTS clerk_user_id TEXT UNIQUE;
+    ALTER TABLE week_plans    ADD COLUMN IF NOT EXISTS user_id TEXT;
+    ALTER TABLE recipe_sources ADD COLUMN IF NOT EXISTS user_id TEXT;
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS recipes (
       id          SERIAL PRIMARY KEY,

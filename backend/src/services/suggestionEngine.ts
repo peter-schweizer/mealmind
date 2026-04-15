@@ -157,6 +157,15 @@ export async function getUserProfile(profileId = 1): Promise<UserProfile> {
   return parseProfile(raw);
 }
 
+export async function getUserProfileByClerkId(clerkUserId: string): Promise<UserProfile | null> {
+  const raw = await queryOne<RawProfile>(
+    'SELECT * FROM user_profile WHERE clerk_user_id = $1',
+    [clerkUserId],
+  );
+  if (!raw) return null;
+  return parseProfile(raw);
+}
+
 export async function getSuggestions(profileId: number, count: number): Promise<Recipe[]> {
   const profile = await getUserProfile(profileId);
   const rawRecipes = await query<RawRecipe>('SELECT * FROM recipes');
@@ -190,8 +199,9 @@ export async function getSuggestions(profileId: number, count: number): Promise<
   return weightedShuffle(scored).slice(0, count).map(({ _score: _s, ...recipe }) => recipe as Recipe);
 }
 
-export async function generateWeekPlan(profileId: number): Promise<Omit<MealSlot, 'id'>[]> {
-  const profile = await getUserProfile(profileId);
+export async function generateWeekPlan(clerkUserId: string): Promise<Omit<MealSlot, 'id'>[]> {
+  const profile = await getUserProfileByClerkId(clerkUserId);
+  if (!profile) throw new Error('Profile not found');
   const allRecipes = (await query<RawRecipe>('SELECT * FROM recipes')).map(parseRecipe);
 
   const filtered = allRecipes.filter(r => {

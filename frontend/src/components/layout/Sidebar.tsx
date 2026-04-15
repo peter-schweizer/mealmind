@@ -1,4 +1,5 @@
 import { NavLink } from 'react-router-dom'
+import { UserButton, useUser } from '@clerk/clerk-react'
 import {
   Compass,
   BookOpen,
@@ -25,6 +26,7 @@ const navItems: NavItem[] = [
 ]
 
 export default function Sidebar() {
+  const { user } = useUser()
   return (
     <aside className="fixed left-0 top-0 h-screen w-64 bg-primary flex flex-col z-40 overflow-hidden">
       {/* Logo */}
@@ -82,11 +84,24 @@ export default function Sidebar() {
         </ul>
       </nav>
 
-      {/* Bottom section */}
-      <div className="px-6 py-5 border-t border-primary-light/20">
-        <div className="text-xs text-white/30 leading-relaxed">
-          <p className="font-medium text-white/40 mb-1">MealMind v1.0</p>
-          <p>Ihr persönlicher Küchenassistent</p>
+      {/* User / Account section */}
+      <div className="px-4 py-4 border-t border-primary-light/20">
+        <div className="flex items-center gap-3">
+          <UserButton
+            appearance={{
+              elements: {
+                avatarBox: 'w-8 h-8',
+              },
+            }}
+          />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-white/90 truncate">
+              {user?.firstName ?? user?.emailAddresses[0]?.emailAddress ?? 'Konto'}
+            </p>
+            <p className="text-xs text-white/40 truncate">
+              {user?.emailAddresses[0]?.emailAddress ?? ''}
+            </p>
+          </div>
         </div>
       </div>
     </aside>
