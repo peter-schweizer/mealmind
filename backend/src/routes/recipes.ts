@@ -4,6 +4,7 @@ import { getSuggestions } from '../services/suggestionEngine';
 import { scrapeGeneric } from '../scrapers/generic';
 import { scrapeChefkoch } from '../scrapers/chefkoch';
 import { scrapeRewe } from '../scrapers/rewe';
+import { parseRecipeText, toScrapedRecipe } from '../scrapers/text-parser';
 
 const router = Router();
 
@@ -283,6 +284,77 @@ router.post('/scrape', async (req: Request, res: Response) => {
     res.status(201).json(serializeRecipe(created));
   } catch (err: unknown) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Scraping failed' });
+  }
+});
+
+// ─── POST /api/recipes/parse-text ────────────────────────────────────────────
+//
+// Accepts raw unstructured text (e.g. an Instagram caption, copied blog text)
+// and returns both the parsed preview and, if save=true, saves the recipe.
+//
+// Body: { text: string, save?: boolean, source_name?: string }
+// Response (preview): { recipe: Recipe, confidence: 'high'|'medium'|'low' }
+
+router.post('/parse-text', async (req: Request, res: Response) => {
+  try {
+    const { text, save = false, source_name = '' } = req.body as {
+      text?: string;
+      save?: boolean;
+      source_name?: string;
+    };
+
+    if (!text || text.trim().length < 10) {
+      return res.status(400).json({ error: 'text is required (min 10 characters)' });
+    }
+
+    const parsed = parseRecipeText(text.trim());
+    const scraped = toScrapedRecipe(parsed);
+
+    if (!save) {
+      // Return preview without saving
+      return res.json({
+        confidence: parsed.confidence,
+        recipe: {
+          title: scraped.title,
+          description: scraped.description,
+          ingredients: scraped.ingredients,
+          instructions: scraped.instructions,
+          prep_time: scraped.prep_time,
+          cook_time: scraped.cook_time,
+          servings: scraped.servings,
+          dietary_tags: scraped.dietary_tags,
+          image_url: scraped.image_url,
+        },
+      });
+    }
+
+    // Save to DB
+    const [created] = await query<RawRecipe>(`
+      INSERT INTO recipes
+        (title, description, image_url, source_url, source_name, prep_time, cook_time, servings,
+         dietary_tags, ingredients, instructions, is_custom)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,TRUE)
+      RETURNING *
+    `, [
+      scraped.title,
+      scraped.description,
+      scraped.image_url,
+      null, // no source URL for text imports
+      source_name || 'Text-Import',
+      scraped.prep_time,
+      scraped.cook_time,
+      scraped.servings,
+      JSON.stringify(scraped.dietary_tags),
+      JSON.stringify(scraped.ingredients),
+      JSON.stringify(scraped.instructions),
+    ]);
+
+    res.status(201).json({
+      confidence: parsed.confidence,
+      recipe: serializeRecipe(created),
+    });
+  } catch (err: unknown) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Parsing failed' });
   }
 });
 

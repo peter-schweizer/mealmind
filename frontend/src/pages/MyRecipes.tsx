@@ -6,10 +6,18 @@ import {
   Trash2,
   Pencil,
   Loader2,
+  FileText,
+  AlertTriangle,
+  CheckCircle2,
+  ChevronRight,
 } from 'lucide-react'
 import type { Recipe, Ingredient } from '../types'
 import { DIETARY_TAGS } from '../types'
-import { getRecipes, createRecipe, updateRecipe, deleteRecipe, scrapeRecipe } from '../api'
+import {
+  getRecipes, createRecipe, updateRecipe, deleteRecipe,
+  scrapeRecipe, parseRecipeText,
+} from '../api'
+import type { ParsedRecipePreview } from '../api'
 import RecipeCard from '../components/recipes/RecipeCard'
 import RecipeModal from '../components/recipes/RecipeModal'
 import RecipeFilter, { type FilterState } from '../components/recipes/RecipeFilter'
@@ -47,11 +55,20 @@ export default function MyRecipes() {
   const [editingId, setEditingId] = useState<number | null>(null)
   const [form, setForm] = useState<RecipeForm>(emptyForm)
   const [formSaving, setFormSaving] = useState(false)
+  // ─── Import modal state ────────────────────────────────────────────────────
   const [showScrapeModal, setShowScrapeModal] = useState(false)
+  const [importTab, setImportTab] = useState<'url' | 'text'>('url')
+  // URL tab
   const [scrapeUrl, setScrapeUrl] = useState('')
   const [scrapeName, setScrapeName] = useState('')
   const [scraping, setScraping] = useState(false)
   const [scrapeError, setScrapeError] = useState('')
+  // Text tab
+  const [pasteText, setPasteText] = useState('')
+  const [parsing, setParsing] = useState(false)
+  const [parseError, setParseError] = useState('')
+  const [preview, setPreview] = useState<ParsedRecipePreview | null>(null)
+  const [saving, setSaving] = useState(false)
 
   const fetchRecipes = useCallback(async () => {
     setLoading(true)
@@ -171,6 +188,17 @@ export default function MyRecipes() {
     }))
   }
 
+  const closeImportModal = () => {
+    setShowScrapeModal(false)
+    setScrapeUrl('')
+    setScrapeName('')
+    setScrapeError('')
+    setPasteText('')
+    setParseError('')
+    setPreview(null)
+    setImportTab('url')
+  }
+
   const handleScrape = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!scrapeUrl.trim()) return
@@ -178,14 +206,44 @@ export default function MyRecipes() {
     setScrapeError('')
     try {
       await scrapeRecipe(scrapeUrl.trim(), scrapeName.trim() || undefined)
-      setShowScrapeModal(false)
-      setScrapeUrl('')
-      setScrapeName('')
+      closeImportModal()
       fetchRecipes()
     } catch {
       setScrapeError('Rezept konnte nicht importiert werden. Bitte prüfen Sie die URL.')
     } finally {
       setScraping(false)
+    }
+  }
+
+  /** Step 1: Parse text and show preview */
+  const handleParsePreview = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (pasteText.trim().length < 10) return
+    setParsing(true)
+    setParseError('')
+    setPreview(null)
+    try {
+      const result = await parseRecipeText(pasteText.trim(), false)
+      setPreview(result)
+    } catch {
+      setParseError('Text konnte nicht analysiert werden. Bitte prüfen Sie das Format.')
+    } finally {
+      setParsing(false)
+    }
+  }
+
+  /** Step 2: Save the previewed recipe */
+  const handleSavePreview = async () => {
+    if (!preview) return
+    setSaving(true)
+    try {
+      await parseRecipeText(pasteText.trim(), true, 'Text-Import')
+      closeImportModal()
+      fetchRecipes()
+    } catch {
+      setParseError('Speichern fehlgeschlagen. Bitte versuchen Sie es erneut.')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -497,13 +555,15 @@ export default function MyRecipes() {
         </div>
       )}
 
-      {/* Scrape URL Modal */}
+      {/* Import Modal */}
       {showScrapeModal && (
         <div
           className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4"
           style={{ backgroundColor: 'rgba(15, 25, 20, 0.7)', backdropFilter: 'blur(4px)' }}
+          onClick={(e) => { if (e.target === e.currentTarget) closeImportModal() }}
         >
-          <div className="modal-content bg-cream rounded-2xl shadow-2xl w-full max-w-md p-6">
+          <div className="modal-content bg-cream rounded-2xl shadow-2xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
+            {/* Header */}
             <div className="flex items-center justify-between mb-5">
               <h2
                 className="text-primary text-xl font-semibold"
@@ -512,55 +572,219 @@ export default function MyRecipes() {
                 Rezept importieren
               </h2>
               <button
-                onClick={() => { setShowScrapeModal(false); setScrapeError('') }}
+                onClick={closeImportModal}
                 className="w-8 h-8 rounded-full bg-sand/60 hover:bg-sand flex items-center justify-center text-gray-500"
               >
                 <X size={16} />
               </button>
             </div>
 
-            <form onSubmit={handleScrape} className="space-y-4">
-              <div>
-                <label className="block text-sm font-semibold text-primary mb-1">
-                  Rezept-URL
-                </label>
-                <input
-                  type="url"
-                  required
-                  value={scrapeUrl}
-                  onChange={(e) => setScrapeUrl(e.target.value)}
-                  placeholder="https://www.chefkoch.de/rezepte/…"
-                  className="w-full border border-sand-dark rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary/50 transition bg-white/70"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-primary mb-1">
-                  Quellname (optional)
-                </label>
-                <input
-                  type="text"
-                  value={scrapeName}
-                  onChange={(e) => setScrapeName(e.target.value)}
-                  placeholder="z.B. Chefkoch"
-                  className="w-full border border-sand-dark rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary/50 transition bg-white/70"
-                />
-              </div>
+            {/* Tabs */}
+            <div className="flex gap-1 p-1 bg-sand rounded-xl mb-5">
+              {([
+                { id: 'url', label: 'Per URL', icon: <Link size={13} /> },
+                { id: 'text', label: 'Text einfügen', icon: <FileText size={13} /> },
+              ] as const).map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => { setImportTab(tab.id); setPreview(null); setScrapeError(''); setParseError('') }}
+                  className={[
+                    'flex-1 flex items-center justify-center gap-1.5 py-2 text-sm font-semibold rounded-lg transition-all',
+                    importTab === tab.id
+                      ? 'bg-white text-primary shadow-sm'
+                      : 'text-gray-500 hover:text-primary',
+                  ].join(' ')}
+                >
+                  {tab.icon}
+                  {tab.label}
+                </button>
+              ))}
+            </div>
 
-              {scrapeError && (
-                <p className="text-red-600 text-xs bg-red-50 rounded-lg px-3 py-2">
-                  {scrapeError}
-                </p>
-              )}
+            {/* ── URL Tab ───────────────────────────────────────────────────── */}
+            {importTab === 'url' && (
+              <form onSubmit={handleScrape} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-primary mb-1">
+                    Rezept-URL
+                  </label>
+                  <input
+                    type="url"
+                    required
+                    autoFocus
+                    value={scrapeUrl}
+                    onChange={(e) => setScrapeUrl(e.target.value)}
+                    placeholder="https://www.chefkoch.de/rezepte/…"
+                    className="w-full border border-sand-dark rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary/50 transition bg-white/70"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">
+                    Funktioniert mit Chefkoch, REWE und den meisten anderen Rezeptseiten (Schema.org-Standard).
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-primary mb-1">
+                    Quellname <span className="font-normal text-gray-400">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={scrapeName}
+                    onChange={(e) => setScrapeName(e.target.value)}
+                    placeholder="z.B. Chefkoch, Mama's Blog …"
+                    className="w-full border border-sand-dark rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary/50 transition bg-white/70"
+                  />
+                </div>
+                {scrapeError && (
+                  <p className="text-red-600 text-xs bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-2">
+                    <AlertTriangle size={12} className="flex-shrink-0" /> {scrapeError}
+                  </p>
+                )}
+                <button
+                  type="submit"
+                  disabled={scraping || !scrapeUrl.trim()}
+                  className="w-full py-2.5 bg-accent text-white text-sm font-semibold rounded-xl hover:bg-accent-dark disabled:opacity-60 transition-colors flex items-center justify-center gap-2"
+                >
+                  {scraping ? <><Loader2 size={15} className="animate-spin" /> Wird importiert…</> : 'Rezept importieren'}
+                </button>
+              </form>
+            )}
 
-              <button
-                type="submit"
-                disabled={scraping}
-                className="w-full py-2.5 bg-accent text-white text-sm font-semibold rounded-xl hover:bg-accent-dark disabled:opacity-60 transition-colors flex items-center justify-center gap-2"
-              >
-                {scraping && <Loader2 size={15} className="animate-spin" />}
-                {scraping ? 'Wird importiert…' : 'Rezept importieren'}
-              </button>
-            </form>
+            {/* ── Text Tab ──────────────────────────────────────────────────── */}
+            {importTab === 'text' && (
+              <div className="space-y-4">
+                {/* Hint */}
+                <div className="flex gap-2.5 p-3 bg-blue-50 border border-blue-100 rounded-xl text-xs text-blue-700 leading-relaxed">
+                  <FileText size={14} className="flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-semibold mb-0.5">Instagram, TikTok & Co.</p>
+                    <p>
+                      Öffne das Posting, kopiere den kompletten Text (Beschreibung / Caption)
+                      und füge ihn hier ein. Das System erkennt Zutaten, Zubereitung und
+                      Zeiten automatisch.
+                    </p>
+                  </div>
+                </div>
+
+                {!preview ? (
+                  <form onSubmit={handleParsePreview} className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-semibold text-primary mb-1">
+                        Rezept-Text einfügen
+                      </label>
+                      <textarea
+                        required
+                        autoFocus
+                        value={pasteText}
+                        onChange={(e) => setPasteText(e.target.value)}
+                        rows={10}
+                        placeholder={`Spaghetti Carbonara 🍝\n\nZutaten für 4 Personen:\n- 400g Spaghetti\n- 200g Pancetta\n...\n\nZubereitung:\n1. Wasser aufkochen...\n\n#pasta #carbonara`}
+                        className="w-full border border-sand-dark rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-primary/20 focus:border-primary/50 transition bg-white/70 resize-none leading-relaxed"
+                      />
+                    </div>
+                    {parseError && (
+                      <p className="text-red-600 text-xs bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-2">
+                        <AlertTriangle size={12} className="flex-shrink-0" /> {parseError}
+                      </p>
+                    )}
+                    <button
+                      type="submit"
+                      disabled={parsing || pasteText.trim().length < 10}
+                      className="w-full py-2.5 bg-primary text-white text-sm font-semibold rounded-xl hover:bg-primary/90 disabled:opacity-60 transition-colors flex items-center justify-center gap-2"
+                    >
+                      {parsing ? <><Loader2 size={15} className="animate-spin" /> Analysiere…</> : <><ChevronRight size={15} /> Analysieren & Vorschau</>}
+                    </button>
+                  </form>
+                ) : (
+                  /* ── Preview ─────────────────────────────────────────────── */
+                  <div className="space-y-4">
+                    {/* Confidence badge */}
+                    <div className={[
+                      'flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg',
+                      preview.confidence === 'high' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                      preview.confidence === 'medium' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
+                      'bg-red-50 text-red-700 border border-red-200',
+                    ].join(' ')}>
+                      {preview.confidence === 'high'
+                        ? <><CheckCircle2 size={13} /> Hohe Erkennungsqualität — alles gefunden</>
+                        : preview.confidence === 'medium'
+                        ? <><AlertTriangle size={13} /> Mittlere Qualität — bitte Vorschau prüfen</>
+                        : <><AlertTriangle size={13} /> Niedrige Qualität — Rezept manuell ergänzen</>
+                      }
+                    </div>
+
+                    {/* Preview card */}
+                    <div className="border border-sand-dark rounded-xl p-4 bg-white/60 space-y-3 text-sm">
+                      <div>
+                        <span className="text-xs font-bold text-primary/50 uppercase tracking-wide">Titel</span>
+                        <p className="font-semibold text-primary mt-0.5">{preview.recipe.title}</p>
+                      </div>
+
+                      {(preview.recipe.servings ?? 0) > 0 && (
+                        <div className="flex gap-4 text-xs text-gray-500">
+                          <span>🍽 {preview.recipe.servings} Portionen</span>
+                          {(preview.recipe.prep_time ?? 0) > 0 && <span>⏱ {preview.recipe.prep_time} Min. Vorbereitung</span>}
+                          {(preview.recipe.cook_time ?? 0) > 0 && <span>🔥 {preview.recipe.cook_time} Min. Kochen</span>}
+                        </div>
+                      )}
+
+                      <div>
+                        <span className="text-xs font-bold text-primary/50 uppercase tracking-wide">
+                          Zutaten ({preview.recipe.ingredients.length})
+                        </span>
+                        {preview.recipe.ingredients.length === 0 ? (
+                          <p className="text-gray-400 text-xs italic mt-1">Keine erkannt</p>
+                        ) : (
+                          <ul className="mt-1 space-y-0.5">
+                            {preview.recipe.ingredients.slice(0, 6).map((ing, i) => (
+                              <li key={i} className="text-gray-700 text-xs">
+                                {ing.amount ? `${ing.amount}${ing.unit ? ' ' + ing.unit : ''} ` : ''}{ing.item}
+                              </li>
+                            ))}
+                            {preview.recipe.ingredients.length > 6 && (
+                              <li className="text-gray-400 text-xs">+{preview.recipe.ingredients.length - 6} weitere…</li>
+                            )}
+                          </ul>
+                        )}
+                      </div>
+
+                      <div>
+                        <span className="text-xs font-bold text-primary/50 uppercase tracking-wide">
+                          Zubereitungsschritte ({preview.recipe.instructions.length})
+                        </span>
+                        {preview.recipe.instructions.length === 0 ? (
+                          <p className="text-gray-400 text-xs italic mt-1">Keine erkannt</p>
+                        ) : (
+                          <p className="text-gray-600 text-xs mt-1 line-clamp-2">
+                            {preview.recipe.instructions[0]}…
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    {parseError && (
+                      <p className="text-red-600 text-xs bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                        {parseError}
+                      </p>
+                    )}
+
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => { setPreview(null); setParseError('') }}
+                        className="flex-1 py-2 border border-sand-dark text-primary text-sm font-semibold rounded-xl hover:bg-sand/40 transition-colors"
+                      >
+                        Zurück
+                      </button>
+                      <button
+                        onClick={handleSavePreview}
+                        disabled={saving}
+                        className="flex-1 py-2 bg-accent text-white text-sm font-semibold rounded-xl hover:bg-accent-dark disabled:opacity-60 transition-colors flex items-center justify-center gap-2"
+                      >
+                        {saving ? <><Loader2 size={14} className="animate-spin" /> Wird gespeichert…</> : 'Rezept speichern'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

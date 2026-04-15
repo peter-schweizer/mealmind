@@ -82,6 +82,24 @@ export async function scrapeRecipe(
   return data;
 }
 
+export interface ParsedRecipePreview {
+  confidence: 'high' | 'medium' | 'low';
+  recipe: Omit<Recipe, 'id' | 'created_at'>;
+}
+
+export async function parseRecipeText(
+  text: string,
+  save?: boolean,
+  source_name?: string
+): Promise<ParsedRecipePreview> {
+  const { data } = await api.post<ParsedRecipePreview>('/recipes/parse-text', {
+    text,
+    save,
+    source_name,
+  });
+  return data;
+}
+
 // ─── Profile ─────────────────────────────────────────────────────────────────
 
 export async function getProfile(): Promise<UserProfile> {
