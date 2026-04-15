@@ -37,6 +37,16 @@ export async function initDb(): Promise<void> {
     ALTER TABLE recipe_sources ADD COLUMN IF NOT EXISTS user_id TEXT;
   `);
 
+  // Replace global UNIQUE(url) with per-user UNIQUE(user_id, url)
+  await pool.query(`
+    ALTER TABLE recipe_sources DROP CONSTRAINT IF EXISTS recipe_sources_url_key;
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_sources_user_url
+      ON recipe_sources (user_id, url)
+      WHERE user_id IS NOT NULL;
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS recipes (
       id          SERIAL PRIMARY KEY,

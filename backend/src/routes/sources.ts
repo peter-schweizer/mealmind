@@ -9,10 +9,14 @@ import {
   getAuthConfig,
   type StoredAuthData,
 } from '../auth/registry';
+import { requireAuth } from '../middleware/requireAuth';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 
 const router = Router();
+
+// All source routes require authentication
+router.use(requireAuth);
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -43,9 +47,12 @@ function serializeSource(raw: RawSource) {
 
 // ─── GET /api/sources ─────────────────────────────────────────────────────────
 
-router.get('/', async (_req: Request, res: Response) => {
+router.get('/', async (req: Request, res: Response) => {
   try {
-    const sources = await query<RawSource>('SELECT * FROM recipe_sources ORDER BY name ASC');
+    const sources = await query<RawSource>(
+      'SELECT * FROM recipe_sources WHERE user_id = $1 ORDER BY name ASC',
+      [req.userId],
+    );
     res.json(sources.map(serializeSource));
   } catch (err: unknown) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
@@ -92,14 +99,17 @@ router.post('/', async (req: Request, res: Response) => {
 
     try {
       const [created] = await query<RawSource>(
-        'INSERT INTO recipe_sources (name, url, scraper_type, status) VALUES ($1,$2,$3,$4) ON CONFLICT (url) DO NOTHING RETURNING *',
-        [name, url, detectedType, 'active'],
+        `INSERT INTO recipe_sources (name, url, scraper_type, status, user_id)
+         VALUES ($1,$2,$3,$4,$5)
+         ON CONFLICT (user_id, url) WHERE user_id IS NOT NULL DO NOTHING
+         RETURNING *`,
+        [name, url, detectedType, 'active', req.userId],
       );
-      if (!created) return res.status(409).json({ error: 'A source with this URL already exists' });
+      if (!created) return res.status(409).json({ error: 'Diese Quelle existiert bereits in deinem Konto' });
       res.status(201).json(serializeSource(created));
     } catch (err: unknown) {
       if (err instanceof Error && err.message.includes('unique')) {
-        return res.status(409).json({ error: 'A source with this URL already exists' });
+        return res.status(409).json({ error: 'Diese Quelle existiert bereits in deinem Konto' });
       }
       throw err;
     }
@@ -112,7 +122,10 @@ router.post('/', async (req: Request, res: Response) => {
 
 router.delete('/:id', async (req: Request, res: Response) => {
   try {
-    const source = await queryOne<{ id: number }>('SELECT id FROM recipe_sources WHERE id = $1', [req.params['id']]);
+    const source = await queryOne<{ id: number }>(
+      'SELECT id FROM recipe_sources WHERE id = $1 AND user_id = $2',
+      [req.params['id'], req.userId],
+    );
     if (!source) return res.status(404).json({ error: 'Source not found' });
     await query('DELETE FROM recipe_sources WHERE id = $1', [req.params['id']]);
     res.json({ success: true });
