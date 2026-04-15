@@ -119,7 +119,7 @@ function parseChefkochJsonLd(node: Record<string, unknown>): Partial<ScrapedReci
 /**
  * Chefkoch-specific HTML fallback parsing using their DOM structure.
  */
-function parseChefkochHtml($: cheerio.CheerioAPI, url: string): Partial<ScrapedRecipe> {
+function parseChefkochHtml($: ReturnType<typeof cheerio.load>, url: string): Partial<ScrapedRecipe> {
   const title = $('h1[class*="ds-heading"]').first().text().trim() ||
     $('h1').first().text().trim();
 
@@ -204,15 +204,16 @@ export async function scrapeChefkoch(
 
   // Try JSON-LD first (Chefkoch uses it)
   let jsonLdData: Partial<ScrapedRecipe> | null = null;
-  $('script[type="application/ld+json"]').each((_, el) => {
-    if (jsonLdData) return;
+  const scriptEls = $('script[type="application/ld+json"]').toArray();
+  for (const el of scriptEls) {
+    if (jsonLdData) break;
     const raw = $(el).html() || '';
     try {
-      const parsed = JSON.parse(raw);
+      const parsed = JSON.parse(raw) as unknown;
       const candidates: unknown[] = Array.isArray(parsed)
         ? parsed
-        : parsed['@graph']
-          ? parsed['@graph']
+        : (parsed as Record<string, unknown>)['@graph']
+          ? (parsed as Record<string, unknown>)['@graph'] as unknown[]
           : [parsed];
       for (const c of candidates) {
         const node = c as Record<string, unknown>;
@@ -226,11 +227,11 @@ export async function scrapeChefkoch(
         }
       }
     } catch {
-      // skip
+      // skip malformed JSON-LD
     }
-  });
+  }
 
-  const htmlData = parseChefkochHtml($, url);
+  const htmlData: Partial<ScrapedRecipe> = parseChefkochHtml($, url);
 
   const merged: ScrapedRecipe = {
     title: (jsonLdData?.title || htmlData.title || '').substring(0, 255),

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   Globe,
   Plus,
@@ -18,8 +18,13 @@ import {
   User,
   ChevronDown,
   ChevronUp,
+  Search,
+  Download,
+  ChefHat,
+  Check,
 } from 'lucide-react'
 import type { RecipeSource, SourceDefinition, AuthConfig } from '../types'
+import type { ExternalSearchResult } from '../api'
 import {
   getSources,
   getSourceRegistry,
@@ -28,6 +33,8 @@ import {
   syncSource,
   loginSource,
   logoutSource,
+  searchExternalRecipes,
+  scrapeRecipe,
 } from '../api'
 
 // ─── Status badge ─────────────────────────────────────────────────────────────
@@ -397,6 +404,233 @@ function SourceCard({ source, onUpdate, onDelete }: SourceCardProps) {
   )
 }
 
+// ─── Search result card ───────────────────────────────────────────────────────
+
+interface SearchResultCardProps {
+  result: ExternalSearchResult
+}
+
+function SearchResultCard({ result }: SearchResultCardProps) {
+  const [importing, setImporting] = useState(false)
+  const [imported, setImported] = useState(false)
+  const [error, setError] = useState('')
+
+  const handleImport = async () => {
+    setImporting(true)
+    setError('')
+    try {
+      await scrapeRecipe(result.url, result.source_name)
+      setImported(true)
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+            'Import fehlgeschlagen.'
+      setError(msg)
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  return (
+    <div className="paper-card-white overflow-hidden flex flex-col">
+      {/* Image */}
+      <div className="relative h-36 flex-shrink-0 bg-sand overflow-hidden">
+        {result.image_url ? (
+          <img
+            src={result.image_url}
+            alt={result.title}
+            className="w-full h-full object-cover"
+            onError={(e) => {
+              e.currentTarget.style.display = 'none'
+              const parent = e.currentTarget.parentElement
+              if (parent) {
+                const fallback = parent.querySelector('.img-fallback') as HTMLElement | null
+                if (fallback) fallback.style.display = 'flex'
+              }
+            }}
+          />
+        ) : null}
+        <div
+          className="img-fallback w-full h-full items-center justify-center absolute inset-0"
+          style={{
+            display: result.image_url ? 'none' : 'flex',
+            background: 'linear-gradient(135deg, #2D4A3E 0%, #3D6354 50%, #E8D5B7 100%)',
+          }}
+        >
+          <ChefHat size={32} className="text-white/30" />
+        </div>
+
+        {/* Source badge */}
+        <span className="absolute top-2 left-2 text-xs font-semibold bg-white/90 text-primary px-2 py-0.5 rounded-full">
+          {result.source_name}
+        </span>
+      </div>
+
+      {/* Content */}
+      <div className="p-3 flex flex-col flex-1">
+        <h3
+          className="text-sm font-semibold text-primary leading-tight mb-1 line-clamp-2"
+          style={{ fontFamily: '"Playfair Display", Georgia, serif' }}
+        >
+          {result.title}
+        </h3>
+        {result.prep_time && (
+          <p className="text-xs text-gray-400 mb-1 flex items-center gap-1">
+            <Clock size={10} /> {result.prep_time} Min.
+          </p>
+        )}
+        {result.description && (
+          <p className="text-xs text-gray-500 leading-relaxed line-clamp-2 flex-1 mb-2">
+            {result.description}
+          </p>
+        )}
+
+        {error && (
+          <p className="text-xs text-red-600 bg-red-50 rounded px-2 py-1 mb-2 flex items-start gap-1">
+            <AlertTriangle size={10} className="flex-shrink-0 mt-0.5" /> {error}
+          </p>
+        )}
+
+        {/* Actions */}
+        <div className="flex items-center gap-2 mt-auto">
+          <button
+            onClick={handleImport}
+            disabled={importing || imported}
+            className={[
+              'flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors flex-1 justify-center',
+              imported
+                ? 'bg-emerald-100 text-emerald-700 cursor-default'
+                : 'bg-primary text-white hover:bg-primary/90 disabled:opacity-60',
+            ].join(' ')}
+          >
+            {importing ? (
+              <><Loader2 size={11} className="animate-spin" /> Importiere…</>
+            ) : imported ? (
+              <><Check size={11} /> Importiert</>
+            ) : (
+              <><Download size={11} /> Importieren</>
+            )}
+          </button>
+          <a
+            href={result.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Originalrezept öffnen"
+            className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-accent rounded-lg hover:bg-sand transition-colors flex-shrink-0"
+          >
+            <ExternalLink size={13} />
+          </a>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Meta-search section ──────────────────────────────────────────────────────
+
+function MetaSearch() {
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<ExternalSearchResult[]>([])
+  const [loading, setLoading] = useState(false)
+  const [searched, setSearched] = useState(false)
+  const [error, setError] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const handleSearch = async (e?: React.FormEvent) => {
+    e?.preventDefault()
+    if (!query.trim()) return
+    setLoading(true)
+    setError('')
+    setResults([])
+    setSearched(true)
+    try {
+      // Backend tries Chefkoch (API) and REWE (HTML); results are merged
+      const data = await searchExternalRecipes(query.trim(), ['chefkoch', 'rewe'], 12)
+      setResults(data)
+    } catch {
+      setError('Suche fehlgeschlagen. Bitte später erneut versuchen.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <section className="mb-10">
+      <h2
+        className="text-primary text-lg font-semibold mb-1"
+        style={{ fontFamily: '"Playfair Display", Georgia, serif' }}
+      >
+        Rezepte suchen
+      </h2>
+      <p className="text-xs text-gray-400 mb-4">
+        Durchsuche Chefkoch und REWE direkt – importiere einzelne Rezepte mit einem Klick.
+      </p>
+
+      {/* Search form */}
+      <form onSubmit={handleSearch} className="paper-card-white p-4 mb-4">
+        <div className="flex gap-2 mb-3">
+          <div className="relative flex-1">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+            <input
+              ref={inputRef}
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="z.B. Pasta Carbonara, vegane Lasagne, Schnitzel…"
+              className="w-full pl-9 pr-3 py-2.5 text-sm border border-sand-dark rounded-xl focus:ring-2 focus:ring-primary/20 focus:border-primary/50 transition bg-white/80"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={!query.trim() || loading}
+            className="flex items-center gap-2 px-5 py-2.5 bg-primary text-white text-sm font-semibold rounded-xl hover:bg-primary/90 disabled:opacity-50 transition-colors flex-shrink-0"
+          >
+            {loading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
+            {loading ? 'Suche…' : 'Suchen'}
+          </button>
+        </div>
+        <div className="flex items-center gap-1.5 text-xs text-gray-400">
+          <span className="font-medium text-primary/60">Quelle:</span>
+          <span className="bg-sand px-2 py-0.5 rounded-full text-primary/70 font-medium">Chefkoch</span>
+          <span className="text-gray-300">· weitere Quellen in Planung</span>
+        </div>
+      </form>
+
+      {/* Results */}
+      {error && (
+        <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-600 mb-4">
+          <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+          {error}
+        </div>
+      )}
+
+      {loading && (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 size={24} className="animate-spin text-primary/40" />
+        </div>
+      )}
+
+      {!loading && searched && results.length === 0 && !error && (
+        <div className="text-center py-10">
+          <Search size={32} className="text-gray-200 mx-auto mb-3" />
+          <p className="text-gray-400 text-sm">Keine Ergebnisse gefunden.</p>
+          <p className="text-gray-300 text-xs mt-1">Versuche andere Suchbegriffe oder wähle andere Quellen.</p>
+        </div>
+      )}
+
+      {!loading && results.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {results.map((result, i) => (
+            <SearchResultCard key={`${result.url}-${i}`} result={result} />
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function Sources() {
@@ -504,6 +738,9 @@ export default function Sources() {
           </p>
         </div>
       </div>
+
+      {/* Meta-search */}
+      <MetaSearch />
 
       {/* Preset registry */}
       <section className="mb-8">

@@ -124,7 +124,7 @@ function parseReweJsonLd(node: Record<string, unknown>): Partial<ScrapedRecipe> 
 /**
  * REWE-specific HTML fallback using their DOM structure.
  */
-function parseReweHtml($: cheerio.CheerioAPI, url: string): Partial<ScrapedRecipe> {
+function parseReweHtml($: ReturnType<typeof cheerio.load>, url: string): Partial<ScrapedRecipe> {
   // REWE recipe page selectors (based on REWE's typical recipe structure)
   const title =
     $('h1[class*="recipe-title"], h1[class*="rTitle"], h1').first().text().trim() ||
@@ -223,15 +223,16 @@ export async function scrapeRewe(
 
   // Try JSON-LD first
   let jsonLdData: Partial<ScrapedRecipe> | null = null;
-  $('script[type="application/ld+json"]').each((_, el) => {
-    if (jsonLdData) return;
+  const scriptEls = $('script[type="application/ld+json"]').toArray();
+  for (const el of scriptEls) {
+    if (jsonLdData) break;
     const raw = $(el).html() || '';
     try {
-      const parsed = JSON.parse(raw);
+      const parsed = JSON.parse(raw) as unknown;
       const candidates: unknown[] = Array.isArray(parsed)
         ? parsed
-        : parsed['@graph']
-          ? parsed['@graph']
+        : (parsed as Record<string, unknown>)['@graph']
+          ? (parsed as Record<string, unknown>)['@graph'] as unknown[]
           : [parsed];
       for (const c of candidates) {
         const node = c as Record<string, unknown>;
@@ -247,9 +248,9 @@ export async function scrapeRewe(
     } catch {
       // skip malformed JSON-LD
     }
-  });
+  }
 
-  const htmlData = parseReweHtml($, url);
+  const htmlData: Partial<ScrapedRecipe> = parseReweHtml($, url);
 
   const merged: ScrapedRecipe = {
     title: (jsonLdData?.title || htmlData.title || '').substring(0, 255),

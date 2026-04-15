@@ -6,6 +6,7 @@ import recipesRouter from './routes/recipes';
 import profileRouter from './routes/profile';
 import plannerRouter from './routes/planner';
 import sourcesRouter from './routes/sources';
+import searchRouter from './routes/search';
 import { initDb } from './db';
 
 // ─── DB init — starts immediately, awaited by middleware before first request ──
@@ -50,6 +51,7 @@ app.use('/api/recipes', recipesRouter);
 app.use('/api/profile', profileRouter);
 app.use('/api/plans', plannerRouter);
 app.use('/api/sources', sourcesRouter);
+app.use('/api/search', searchRouter);
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '1.0.0', db: 'neon-postgres' });

@@ -179,6 +179,31 @@ export async function getIcal(planId: number): Promise<string> {
   return data;
 }
 
+// ─── Meta-search ─────────────────────────────────────────────────────────────
+
+export interface ExternalSearchResult {
+  title: string;
+  url: string;
+  image_url?: string;
+  description?: string;
+  source_name: string;
+  scraper_type: string;
+  prep_time?: number;
+  rating?: number;
+}
+
+export async function searchExternalRecipes(
+  query: string,
+  sources?: string[],
+  limit?: number
+): Promise<ExternalSearchResult[]> {
+  const params: Record<string, string | number> = { q: query };
+  if (sources?.length) params['sources'] = sources.join(',');
+  if (limit) params['limit'] = limit;
+  const { data } = await api.get<ExternalSearchResult[]>('/search', { params });
+  return data;
+}
+
 // ─── Sources ─────────────────────────────────────────────────────────────────
 
 export async function getSources(): Promise<RecipeSource[]> {
