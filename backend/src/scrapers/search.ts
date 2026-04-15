@@ -234,6 +234,100 @@ export async function searchChefkoch(query: string, limit = 10): Promise<SearchR
   }
 }
 
+// ─── Spoonacular search ───────────────────────────────────────────────────────
+
+interface SpoonacularRecipe {
+  id: number;
+  title: string;
+  image?: string;
+  readyInMinutes?: number;
+  sourceUrl?: string;
+  sourceName?: string;
+  summary?: string;
+  vegetarian?: boolean;
+  vegan?: boolean;
+  glutenFree?: boolean;
+  dairyFree?: boolean;
+}
+
+interface SpoonacularSearchResponse {
+  results: SpoonacularRecipe[];
+  totalResults: number;
+}
+
+/** Strip HTML tags from a string (used for Spoonacular summaries). */
+function stripHtml(html: string): string {
+  return html.replace(/<[^>]*>/g, '').replace(/&[a-z]+;/gi, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Search Spoonacular's recipe database (https://spoonacular.com/food-api).
+ * Requires SPOONACULAR_API_KEY environment variable.
+ * Free tier: ~150 API points/day.
+ */
+export async function searchSpoonacular(query: string, limit = 10): Promise<SearchResult[]> {
+  const apiKey = process.env['SPOONACULAR_API_KEY'];
+  if (!apiKey) return [];
+
+  try {
+    const { data } = await axios.get<SpoonacularSearchResponse>(
+      'https://api.spoonacular.com/recipes/complexSearch',
+      {
+        timeout: 10000,
+        params: {
+          query,
+          number: limit,
+          addRecipeInformation: true,
+          instructionsRequired: false,
+          apiKey,
+        },
+        headers: { Accept: 'application/json' },
+      }
+    );
+
+    if (!Array.isArray(data?.results)) return [];
+
+    return data.results
+      .filter((r) => r.title && (r.sourceUrl || r.id))
+      .map((r): SearchResult => {
+        // Prefer external sourceUrl; fall back to Spoonacular's own recipe page
+        const url =
+          r.sourceUrl && !r.sourceUrl.includes('spoonacular.com')
+            ? r.sourceUrl
+            : `https://spoonacular.com/recipes/${encodeURIComponent(
+                r.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')
+              )}-${r.id}`;
+
+        const description = r.summary ? stripHtml(r.summary).substring(0, 200) : undefined;
+
+        return {
+          title: r.title,
+          url,
+          image_url: r.image,
+          description,
+          source_name: r.sourceName || 'Spoonacular',
+          scraper_type: 'generic',
+          prep_time: r.readyInMinutes,
+        };
+      });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Returns which sources are currently available (i.e. have API keys configured).
+ * Chefkoch uses a public API, so it's always available.
+ * Spoonacular requires SPOONACULAR_API_KEY.
+ */
+export function getAvailableSources(): Array<{ id: string; name: string; available: boolean }> {
+  return [
+    { id: 'chefkoch', name: 'Chefkoch', available: true },
+    { id: 'spoonacular', name: 'Spoonacular', available: !!process.env['SPOONACULAR_API_KEY'] },
+    { id: 'rewe', name: 'REWE', available: false },
+  ];
+}
+
 // ─── REWE search ──────────────────────────────────────────────────────────────
 
 interface ReweRecipeItem {
@@ -362,19 +456,31 @@ export async function searchRewe(query: string, limit = 10): Promise<SearchResul
 // ─── Combined search ───────────────────────────────────────────────────────────
 
 export interface SearchOptions {
-  sources?: string[];   // defaults to ['chefkoch', 'rewe']
-  limit?: number;       // per source, defaults to 10
+  /** Source IDs to include. Defaults to all available sources. */
+  sources?: string[];
+  /** Max results per source. Defaults to 10, max 30. */
+  limit?: number;
 }
 
 export async function searchAllSources(
   query: string,
   options: SearchOptions = {}
 ): Promise<SearchResult[]> {
-  const sources = options.sources ?? ['chefkoch', 'rewe'];
   const limit = Math.min(options.limit ?? 10, 30);
+
+  // Determine which sources to query.
+  // If the caller passes specific sources, honour them.
+  // Otherwise fall back to all sources that are currently available.
+  const available = getAvailableSources()
+    .filter((s) => s.available)
+    .map((s) => s.id);
+
+  const requested = options.sources ?? available;
+  const sources = requested.filter((s) => available.includes(s));
 
   const tasks: Promise<SearchResult[]>[] = [];
   if (sources.includes('chefkoch')) tasks.push(searchChefkoch(query, limit));
+  if (sources.includes('spoonacular')) tasks.push(searchSpoonacular(query, limit));
   if (sources.includes('rewe')) tasks.push(searchRewe(query, limit));
 
   const settled = await Promise.allSettled(tasks);

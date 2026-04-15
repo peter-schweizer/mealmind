@@ -192,6 +192,17 @@ export interface ExternalSearchResult {
   rating?: number;
 }
 
+export interface SearchSource {
+  id: string;
+  name: string;
+  available: boolean;
+}
+
+export async function getSearchSources(): Promise<SearchSource[]> {
+  const { data } = await api.get<SearchSource[]>('/search/sources');
+  return data;
+}
+
 export async function searchExternalRecipes(
   query: string,
   sources?: string[],

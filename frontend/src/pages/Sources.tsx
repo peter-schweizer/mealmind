@@ -24,7 +24,7 @@ import {
   Check,
 } from 'lucide-react'
 import type { RecipeSource, SourceDefinition, AuthConfig } from '../types'
-import type { ExternalSearchResult } from '../api'
+import type { ExternalSearchResult, SearchSource } from '../api'
 import {
   getSources,
   getSourceRegistry,
@@ -34,6 +34,7 @@ import {
   loginSource,
   logoutSource,
   searchExternalRecipes,
+  getSearchSources,
   scrapeRecipe,
 } from '../api'
 
@@ -536,7 +537,19 @@ function MetaSearch() {
   const [loading, setLoading] = useState(false)
   const [searched, setSearched] = useState(false)
   const [error, setError] = useState('')
+  const [availableSources, setAvailableSources] = useState<SearchSource[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    getSearchSources()
+      .then(setAvailableSources)
+      .catch(() => {
+        // fallback: assume only Chefkoch available
+        setAvailableSources([{ id: 'chefkoch', name: 'Chefkoch', available: true }])
+      })
+  }, [])
+
+  const activeSources = availableSources.filter((s) => s.available)
 
   const handleSearch = async (e?: React.FormEvent) => {
     e?.preventDefault()
@@ -546,8 +559,11 @@ function MetaSearch() {
     setResults([])
     setSearched(true)
     try {
-      // Backend tries Chefkoch (API) and REWE (HTML); results are merged
-      const data = await searchExternalRecipes(query.trim(), ['chefkoch', 'rewe'], 12)
+      const data = await searchExternalRecipes(
+        query.trim(),
+        activeSources.map((s) => s.id),
+        12
+      )
       setResults(data)
     } catch {
       setError('Suche fehlgeschlagen. Bitte später erneut versuchen.')
@@ -591,10 +607,17 @@ function MetaSearch() {
             {loading ? 'Suche…' : 'Suchen'}
           </button>
         </div>
-        <div className="flex items-center gap-1.5 text-xs text-gray-400">
-          <span className="font-medium text-primary/60">Quelle:</span>
-          <span className="bg-sand px-2 py-0.5 rounded-full text-primary/70 font-medium">Chefkoch</span>
-          <span className="text-gray-300">· weitere Quellen in Planung</span>
+        <div className="flex items-center gap-1.5 text-xs text-gray-400 flex-wrap">
+          <span className="font-medium text-primary/60">Quellen:</span>
+          {activeSources.length > 0 ? (
+            activeSources.map((s) => (
+              <span key={s.id} className="bg-sand px-2 py-0.5 rounded-full text-primary/70 font-medium">
+                {s.name}
+              </span>
+            ))
+          ) : (
+            <span className="text-gray-300 italic">lädt…</span>
+          )}
         </div>
       </form>
 
