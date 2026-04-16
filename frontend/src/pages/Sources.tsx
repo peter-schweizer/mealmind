@@ -114,6 +114,35 @@ function LoginModal({ source, authConfig, onClose, onSuccess }: LoginModalProps)
   )
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  // Cookie-paste flow (for SSO / Apple / Google users)
+  const [step, setStep] = useState<'form' | 'cookie'>('form')
+  const [cookieValue, setCookieValue] = useState('')
+
+  const handleOpenWebLogin = () => {
+    window.open(authConfig.webLoginUrl, '_blank', 'noopener,noreferrer')
+    setStep('cookie')
+  }
+
+  const handleCookieSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!cookieValue.trim()) return
+    setLoading(true)
+    setError('')
+    try {
+      const updated = await loginSource(source.id, { raw_cookie: cookieValue.trim() })
+      onSuccess(updated)
+      onClose()
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+            'Speichern fehlgeschlagen.'
+      setError(msg)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -146,13 +175,17 @@ function LoginModal({ source, authConfig, onClose, onSuccess }: LoginModalProps)
         <div className="flex items-center justify-between mb-1">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-              <LogIn size={15} className="text-primary" />
+              {step === 'cookie' ? (
+                <ShieldCheck size={15} className="text-primary" />
+              ) : (
+                <LogIn size={15} className="text-primary" />
+              )}
             </div>
             <h2
               className="text-primary text-xl font-semibold"
               style={{ fontFamily: '"Playfair Display", Georgia, serif' }}
             >
-              {authConfig.label}
+              {step === 'cookie' ? 'Sitzung übertragen' : authConfig.label}
             </h2>
           </div>
           <button
@@ -163,83 +196,148 @@ function LoginModal({ source, authConfig, onClose, onSuccess }: LoginModalProps)
           </button>
         </div>
 
-        <p className="text-xs text-gray-500 mb-5 ml-10">{authConfig.description}</p>
-
-        {/* Web login (SSO option) */}
-        {authConfig.webLoginUrl && (
-          <div className="mb-5">
-            <a
-              href={authConfig.webLoginUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="w-full flex items-center justify-center gap-2 py-2.5 bg-accent text-white text-sm font-semibold rounded-xl hover:bg-accent-dark transition-colors"
-            >
-              <ExternalLink size={15} />
-              {authConfig.webLoginLabel ?? 'Auf Website anmelden'}
-            </a>
-            <p className="text-xs text-gray-400 text-center mt-2">
-              Für Apple-, Google- oder Facebook-Konten diese Option verwenden
+        {/* ── Cookie-paste step ── */}
+        {step === 'cookie' ? (
+          <>
+            <p className="text-xs text-gray-500 mb-5 ml-10">
+              Sie haben {authConfig.webLoginLabel?.replace('Auf ', '').replace(' anmelden', '') ?? 'die Website'} in einem neuen Tab geöffnet.
+              Nach der Anmeldung dort bitte Ihren Session-Cookie hier einfügen.
             </p>
 
-            {/* Divider */}
-            <div className="flex items-center gap-3 mt-5">
-              <div className="flex-1 h-px bg-sand-dark/40" />
-              <span className="text-xs text-gray-400 whitespace-nowrap">
-                oder mit E-Mail &amp; Passwort
-              </span>
-              <div className="flex-1 h-px bg-sand-dark/40" />
+            {/* Step-by-step guide */}
+            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-800 leading-relaxed space-y-1.5">
+              <p className="font-semibold text-blue-900">So kopieren Sie Ihren Session-Cookie:</p>
+              <p>1. Melden Sie sich im neuen Tab auf der Website an.</p>
+              <p>2. Drücken Sie <kbd className="bg-blue-100 px-1 py-0.5 rounded font-mono">F12</kbd> (oder Rechtsklick → &quot;Untersuchen&quot;).</p>
+              <p>3. Wechseln Sie zu <strong>Anwendung</strong> → <strong>Cookies</strong>.</p>
+              <p>4. Kopieren Sie den Wert des <strong>größten / längsten</strong> Cookie-Eintrags (meist <code className="bg-blue-100 px-1 rounded">ckaccount</code> oder ähnlich).</p>
+              <p>5. Fügen Sie ihn unten ein und klicken Sie &quot;Sitzung speichern&quot;.</p>
             </div>
-          </div>
-        )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {authConfig.fields.map((field) => (
-            <div key={field.key}>
-              <label className="block text-sm font-semibold text-primary mb-1">
-                {field.label}
-              </label>
-              <input
-                type={field.type}
-                required
-                autoComplete={field.type === 'password' ? 'current-password' : 'email'}
-                value={fields[field.key] ?? ''}
-                onChange={(e) =>
-                  setFields((prev) => ({ ...prev, [field.key]: e.target.value }))
-                }
-                placeholder={field.placeholder}
-                className="w-full border border-sand-dark rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary/50 transition bg-white/70"
-              />
-              {field.hint && (
-                <p className="text-xs text-gray-400 mt-1">{field.hint}</p>
+            <form onSubmit={handleCookieSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-semibold text-primary mb-1">
+                  Session-Cookie
+                </label>
+                <textarea
+                  required
+                  rows={3}
+                  value={cookieValue}
+                  onChange={(e) => setCookieValue(e.target.value)}
+                  placeholder="name=wert; name2=wert2; …"
+                  className="w-full border border-sand-dark rounded-lg px-3 py-2 text-xs font-mono focus:ring-2 focus:ring-primary/20 focus:border-primary/50 transition bg-white/70 resize-none"
+                />
+              </div>
+
+              {error && (
+                <p className="text-xs text-red-600 bg-red-50 border border-red-200 px-3 py-2 rounded-lg flex items-start gap-2">
+                  <AlertTriangle size={13} className="mt-0.5 flex-shrink-0" />
+                  {error}
+                </p>
               )}
-            </div>
-          ))}
 
-          {error && (
-            <p className="text-xs text-red-600 bg-red-50 border border-red-200 px-3 py-2 rounded-lg flex items-start gap-2">
-              <AlertTriangle size={13} className="mt-0.5 flex-shrink-0" />
-              {error}
-            </p>
-          )}
+              <button
+                type="submit"
+                disabled={loading || !cookieValue.trim()}
+                className="w-full py-2.5 bg-primary text-white text-sm font-semibold rounded-xl hover:bg-primary/90 disabled:opacity-60 transition-colors flex items-center justify-center gap-2"
+              >
+                {loading ? (
+                  <><Loader2 size={15} className="animate-spin" /> Speichere…</>
+                ) : (
+                  <><ShieldCheck size={15} /> Sitzung speichern</>
+                )}
+              </button>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-2.5 bg-primary text-white text-sm font-semibold rounded-xl hover:bg-primary/90 disabled:opacity-60 transition-colors flex items-center justify-center gap-2"
-          >
-            {loading ? (
-              <><Loader2 size={15} className="animate-spin" /> Anmelden…</>
-            ) : (
-              <><LogIn size={15} /> Anmelden</>
+              <button
+                type="button"
+                onClick={() => { setStep('form'); setError('') }}
+                className="w-full py-2 text-xs text-gray-400 hover:text-primary transition-colors"
+              >
+                ← Zurück zur E-Mail-Anmeldung
+              </button>
+            </form>
+          </>
+        ) : (
+          /* ── Normal login step ── */
+          <>
+            <p className="text-xs text-gray-500 mb-5 ml-10">{authConfig.description}</p>
+
+            {/* Web login button (SSO) */}
+            {authConfig.webLoginUrl && (
+              <div className="mb-5">
+                <button
+                  type="button"
+                  onClick={handleOpenWebLogin}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 bg-accent text-white text-sm font-semibold rounded-xl hover:bg-accent-dark transition-colors"
+                >
+                  <ExternalLink size={15} />
+                  {authConfig.webLoginLabel ?? 'Auf Website anmelden'}
+                </button>
+                <p className="text-xs text-gray-400 text-center mt-2">
+                  Für Apple-, Google- oder Facebook-Konten
+                </p>
+
+                {/* Divider */}
+                <div className="flex items-center gap-3 mt-5">
+                  <div className="flex-1 h-px bg-sand-dark/40" />
+                  <span className="text-xs text-gray-400 whitespace-nowrap">
+                    oder mit E-Mail &amp; Passwort
+                  </span>
+                  <div className="flex-1 h-px bg-sand-dark/40" />
+                </div>
+              </div>
             )}
-          </button>
-        </form>
 
-        {authConfig.privacyNote && (
-          <div className="mt-4 flex gap-2 p-3 bg-sand/40 rounded-xl border border-sand-dark/30">
-            <ShieldCheck size={13} className="text-primary/50 flex-shrink-0 mt-0.5" />
-            <p className="text-xs text-gray-500 leading-relaxed">{authConfig.privacyNote}</p>
-          </div>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {authConfig.fields.map((field) => (
+                <div key={field.key}>
+                  <label className="block text-sm font-semibold text-primary mb-1">
+                    {field.label}
+                  </label>
+                  <input
+                    type={field.type}
+                    required
+                    autoComplete={field.type === 'password' ? 'current-password' : 'email'}
+                    value={fields[field.key] ?? ''}
+                    onChange={(e) =>
+                      setFields((prev) => ({ ...prev, [field.key]: e.target.value }))
+                    }
+                    placeholder={field.placeholder}
+                    className="w-full border border-sand-dark rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary/50 transition bg-white/70"
+                  />
+                  {field.hint && (
+                    <p className="text-xs text-gray-400 mt-1">{field.hint}</p>
+                  )}
+                </div>
+              ))}
+
+              {error && (
+                <p className="text-xs text-red-600 bg-red-50 border border-red-200 px-3 py-2 rounded-lg flex items-start gap-2">
+                  <AlertTriangle size={13} className="mt-0.5 flex-shrink-0" />
+                  {error}
+                </p>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-2.5 bg-primary text-white text-sm font-semibold rounded-xl hover:bg-primary/90 disabled:opacity-60 transition-colors flex items-center justify-center gap-2"
+              >
+                {loading ? (
+                  <><Loader2 size={15} className="animate-spin" /> Anmelden…</>
+                ) : (
+                  <><LogIn size={15} /> Anmelden</>
+                )}
+              </button>
+            </form>
+
+            {authConfig.privacyNote && (
+              <div className="mt-4 flex gap-2 p-3 bg-sand/40 rounded-xl border border-sand-dark/30">
+                <ShieldCheck size={13} className="text-primary/50 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-gray-500 leading-relaxed">{authConfig.privacyNote}</p>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

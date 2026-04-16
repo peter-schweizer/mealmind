@@ -147,6 +147,30 @@ router.post('/:id/login', async (req: Request, res: Response) => {
   }
 
   const credentials = req.body as Record<string, string>;
+
+  // ── Cookie-paste shortcut: user manually provides a session cookie (for SSO users) ──
+  if (credentials['raw_cookie']) {
+    const rawCookie = credentials['raw_cookie'].trim();
+    if (!rawCookie) return res.status(400).json({ error: 'Cookie-Wert darf nicht leer sein.' });
+    const authData: StoredAuthData = {
+      cookies: rawCookie,
+      username: credentials['username'] || undefined,
+      authenticated_at: new Date().toISOString(),
+    };
+    try {
+      const [updated] = await query<RawSource>(`
+        UPDATE recipe_sources SET
+          auth_type='cookie_paste', auth_data=$1, auth_status='authenticated',
+          auth_error=NULL, auth_username=$2
+        WHERE id=$3
+        RETURNING *
+      `, [JSON.stringify(authData), credentials['username'] || null, sourceId]);
+      return res.json(serializeSource(updated));
+    } catch (err: unknown) {
+      return res.status(500).json({ error: err instanceof Error ? err.message : 'Fehler beim Speichern' });
+    }
+  }
+
   const missing = def.authConfig.fields.filter((f) => !credentials[f.key]).map((f) => f.label);
   if (missing.length > 0) return res.status(400).json({ error: `Fehlende Felder: ${missing.join(', ')}` });
 
