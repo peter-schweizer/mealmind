@@ -84,7 +84,7 @@ const chefkoch: SourceDefinition = {
       'Mit Ihrem Chefkoch-Konto (auch Pro) erhalten Sie Zugang zu Ihrer persönlichen Rezeptsammlung und Premium-Rezepten.',
     privacyNote:
       'Ihr Passwort wird nie gespeichert. Es wird einmalig für die Anmeldung verwendet; danach speichert MealMind nur das verschlüsselte Sitzungs-Cookie.',
-    webLoginUrl: 'https://www.chefkoch.de/benutzer/login/',
+    webLoginUrl: 'https://www.chefkoch.de/benutzer/einloggen?context=login/init',
     webLoginLabel: 'Auf Chefkoch.de anmelden',
     fields: [
       {
