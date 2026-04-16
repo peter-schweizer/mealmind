@@ -48,6 +48,10 @@ export interface AuthConfig {
   description: string;
   privacyNote?: string;
   fields: AuthField[];
+  /** URL to the source's own login page — for Apple/Google/SSO users */
+  webLoginUrl?: string;
+  /** Button label, e.g. "Auf Chefkoch.de anmelden" */
+  webLoginLabel?: string;
 }
 
 export interface SourceDefinition {

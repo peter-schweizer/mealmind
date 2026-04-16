@@ -20,6 +20,14 @@ export interface AuthConfig {
   privacyNote?: string;
   /** Form fields to render in the login modal */
   fields: AuthField[];
+  /**
+   * URL to the source's own login page.
+   * When set, a "Auf Website anmelden" button is shown for users
+   * who use Apple, Google or other SSO providers.
+   */
+  webLoginUrl?: string;
+  /** Label for the web-login button, e.g. "Auf Chefkoch.de anmelden" */
+  webLoginLabel?: string;
 }
 
 /** Stored in the DB `auth_data` column (JSON) */
@@ -76,6 +84,8 @@ const chefkoch: SourceDefinition = {
       'Mit Ihrem Chefkoch-Konto (auch Pro) erhalten Sie Zugang zu Ihrer persönlichen Rezeptsammlung und Premium-Rezepten.',
     privacyNote:
       'Ihr Passwort wird nie gespeichert. Es wird einmalig für die Anmeldung verwendet; danach speichert MealMind nur das verschlüsselte Sitzungs-Cookie.',
+    webLoginUrl: 'https://www.chefkoch.de/benutzer/login/',
+    webLoginLabel: 'Auf Chefkoch.de anmelden',
     fields: [
       {
         key: 'email',
@@ -202,6 +212,8 @@ const rewe: SourceDefinition = {
       'Mit Ihrem REWE-Konto können Sie personalisierte Rezeptvorschläge und Ihren REWE-Einkaufskorb nutzen.',
     privacyNote:
       'Ihr Passwort wird nie gespeichert. Nur das Sitzungs-Cookie wird lokal abgelegt.',
+    webLoginUrl: 'https://www.rewe.de/service/login/',
+    webLoginLabel: 'Auf REWE.de anmelden',
     fields: [
       {
         key: 'email',

@@ -165,6 +165,33 @@ function LoginModal({ source, authConfig, onClose, onSuccess }: LoginModalProps)
 
         <p className="text-xs text-gray-500 mb-5 ml-10">{authConfig.description}</p>
 
+        {/* Web login (SSO option) */}
+        {authConfig.webLoginUrl && (
+          <div className="mb-5">
+            <a
+              href={authConfig.webLoginUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full flex items-center justify-center gap-2 py-2.5 bg-accent text-white text-sm font-semibold rounded-xl hover:bg-accent-dark transition-colors"
+            >
+              <ExternalLink size={15} />
+              {authConfig.webLoginLabel ?? 'Auf Website anmelden'}
+            </a>
+            <p className="text-xs text-gray-400 text-center mt-2">
+              Für Apple-, Google- oder Facebook-Konten diese Option verwenden
+            </p>
+
+            {/* Divider */}
+            <div className="flex items-center gap-3 mt-5">
+              <div className="flex-1 h-px bg-sand-dark/40" />
+              <span className="text-xs text-gray-400 whitespace-nowrap">
+                oder mit E-Mail &amp; Passwort
+              </span>
+              <div className="flex-1 h-px bg-sand-dark/40" />
+            </div>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-4">
           {authConfig.fields.map((field) => (
             <div key={field.key}>
