@@ -178,7 +178,7 @@ export default function Discover() {
     setExternalLoading(true)
     externalSearchTimer.current = setTimeout(async () => {
       try {
-        const results = await searchExternalRecipes(filters.search.trim(), undefined, 12)
+        const results = await searchExternalRecipes(filters.search.trim(), undefined, 30)
         setExternalResults(results)
       } catch {
         setExternalResults([])
