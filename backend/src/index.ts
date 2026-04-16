@@ -34,12 +34,17 @@ app.use(cors({
   credentials: true,
 }));
 
-// Only activate Clerk middleware when the secret key is configured.
-// Without it, clerkMiddleware() throws on every request and breaks all routes.
-if (process.env['CLERK_SECRET_KEY']) {
-  app.use(clerkMiddleware());
+// Only activate Clerk middleware when both keys are configured.
+// @clerk/express needs CLERK_SECRET_KEY (runtime) + CLERK_PUBLISHABLE_KEY.
+// The frontend uses VITE_CLERK_PUBLISHABLE_KEY, so we pass it explicitly.
+const clerkSecretKey = process.env['CLERK_SECRET_KEY'];
+const clerkPublishableKey =
+  process.env['CLERK_PUBLISHABLE_KEY'] ?? process.env['VITE_CLERK_PUBLISHABLE_KEY'];
+
+if (clerkSecretKey && clerkPublishableKey) {
+  app.use(clerkMiddleware({ secretKey: clerkSecretKey, publishableKey: clerkPublishableKey }));
 } else {
-  console.warn('[auth] CLERK_SECRET_KEY not set — auth middleware disabled');
+  console.warn('[auth] Clerk keys not set — auth middleware disabled');
 }
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));

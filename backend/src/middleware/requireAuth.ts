@@ -25,8 +25,10 @@ export async function requireAuth(
   res: Response,
   next: NextFunction,
 ): Promise<void> {
-  if (!process.env['CLERK_SECRET_KEY']) {
-    res.status(503).json({ error: 'Authentication not configured (CLERK_SECRET_KEY missing)' });
+  const hasClerk = process.env['CLERK_SECRET_KEY'] &&
+    (process.env['CLERK_PUBLISHABLE_KEY'] ?? process.env['VITE_CLERK_PUBLISHABLE_KEY']);
+  if (!hasClerk) {
+    res.status(503).json({ error: 'Authentication not configured' });
     return;
   }
 
