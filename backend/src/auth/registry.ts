@@ -230,39 +230,111 @@ const rewe: SourceDefinition = {
     const { email, password } = credentials;
     if (!email || !password) throw new Error('E-Mail und Passwort sind erforderlich.');
 
-    // REWE uses OAuth via their API
-    const loginResp = await axios.post(
-      'https://www.rewe.de/api/login',
-      { email, password },
-      {
-        timeout: 10_000,
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent':
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120 Safari/537.36',
-        },
-        validateStatus: (s) => s < 500,
-      },
+    const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124 Safari/537.36';
+
+    // Step 1 – Load the REWE login page to find the Keycloak action URL
+    const loginPageUrl = 'https://www.rewe.de/service/login/';
+    const pageResp = await axios.get<string>(loginPageUrl, {
+      timeout: 12_000,
+      headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml' },
+      maxRedirects: 5,
+    });
+
+    // Collect cookies from the login page
+    const pageCookies: string[] = ([] as string[]).concat(
+      (pageResp.headers['set-cookie'] as unknown as string[]) ?? [],
     );
 
-    if (loginResp.status === 401 || loginResp.status === 403) {
-      throw new Error('Anmeldung fehlgeschlagen. Bitte E-Mail und Passwort prüfen.');
-    }
-
-    const setCookies: string[] = ([] as string[]).concat(
-      (loginResp.headers['set-cookie'] as unknown as string[]) ?? [],
-    );
-    const token: string =
-      (loginResp.data as Record<string, string>)?.token ||
-      (loginResp.data as Record<string, string>)?.access_token ||
+    // Extract the Keycloak form action URL from the login form
+    const $ = cheerio.load(pageResp.data as string);
+    let actionUrl =
+      $('form#kc-form-login').attr('action') ||
+      $('form[action*="auth"]').attr('action') ||
+      $('form[method="post"]').attr('action') ||
       '';
 
+    if (!actionUrl) {
+      // Try to find action URL in inline script (some Keycloak setups)
+      const scriptContent = $('script').map((_, el) => $(el).html()).get().join('\n');
+      const match = scriptContent.match(/action["']?\s*:\s*["']([^"']+auth[^"']+)["']/i);
+      if (match) actionUrl = match[1];
+    }
+
+    if (!actionUrl) {
+      throw new Error('Anmeldung fehlgeschlagen: Login-Formular nicht gefunden. REWE hat möglicherweise ihre Anmeldeseite geändert.');
+    }
+
+    // Make sure the URL is absolute
+    if (actionUrl.startsWith('/')) {
+      actionUrl = `https://www.rewe.de${actionUrl}`;
+    }
+
+    // Step 2 – POST credentials to the Keycloak action URL
+    const params = new URLSearchParams();
+    params.append('username', email);
+    params.append('password', password);
+    params.append('credentialId', '');
+
+    const loginResp = await axios.post(actionUrl, params.toString(), {
+      timeout: 12_000,
+      maxRedirects: 5,
+      headers: {
+        'User-Agent': UA,
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Referer: loginPageUrl,
+        Cookie: parseCookiesFromHeaders(pageCookies),
+      },
+      validateStatus: (s) => s < 500,
+    });
+
+    const allSetCookies: string[] = ([] as string[]).concat(
+      (loginResp.headers['set-cookie'] as unknown as string[]) ?? [],
+    );
+
+    // Check for successful login: either we got session cookies or the page contains a logout indicator
+    const responseBody = String(loginResp.data ?? '');
+    const hasSessionCookie = allSetCookies.some(
+      (c) => c.toLowerCase().includes('session') || c.toLowerCase().includes('auth') || c.toLowerCase().includes('token'),
+    );
+    const hasLogoutIndicator = responseBody.toLowerCase().includes('abmelden') ||
+      responseBody.toLowerCase().includes('logout') ||
+      responseBody.toLowerCase().includes('mein konto');
+
+    if (!hasSessionCookie && !hasLogoutIndicator) {
+      // Check if the response still contains the login form (= wrong credentials)
+      const hasLoginForm = responseBody.toLowerCase().includes('passwort') &&
+        responseBody.toLowerCase().includes('anmeld');
+      if (hasLoginForm || loginResp.status === 401 || loginResp.status === 403) {
+        throw new Error('Anmeldung fehlgeschlagen. Bitte E-Mail und Passwort prüfen.');
+      }
+      throw new Error('Anmeldung fehlgeschlagen. Bitte später erneut versuchen.');
+    }
+
+    const sessionCookies = parseCookiesFromHeaders([...pageCookies, ...allSetCookies]);
+
     return {
-      cookies: setCookies.length > 0 ? parseCookiesFromHeaders(setCookies) : undefined,
-      token: token || undefined,
+      cookies: sessionCookies,
       username: email,
       authenticated_at: new Date().toISOString(),
     };
+  },
+
+  validateSession: async (authData, _sourceUrl) => {
+    if (!authData.cookies) return false;
+    try {
+      const resp = await axios.get<string>('https://www.rewe.de/service/mein-konto/', {
+        timeout: 8_000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124 Safari/537.36',
+          Cookie: authData.cookies,
+        },
+        maxRedirects: 3,
+      });
+      const body = String(resp.data).toLowerCase();
+      return body.includes('abmelden') || body.includes('logout') || body.includes('mein konto');
+    } catch {
+      return false;
+    }
   },
 
   authHeaders: (authData) => {
