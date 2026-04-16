@@ -84,8 +84,6 @@ const chefkoch: SourceDefinition = {
       'Mit Ihrem Chefkoch-Konto (auch Pro) erhalten Sie Zugang zu Ihrer persönlichen Rezeptsammlung und Premium-Rezepten.',
     privacyNote:
       'Ihr Passwort wird nie gespeichert. Es wird einmalig für die Anmeldung verwendet; danach speichert MealMind nur das verschlüsselte Sitzungs-Cookie.',
-    webLoginUrl: 'https://www.chefkoch.de/benutzer/einloggen?context=login/init',
-    webLoginLabel: 'Auf Chefkoch.de anmelden',
     fields: [
       {
         key: 'email',
@@ -212,8 +210,6 @@ const rewe: SourceDefinition = {
       'Mit Ihrem REWE-Konto können Sie personalisierte Rezeptvorschläge und Ihren REWE-Einkaufskorb nutzen.',
     privacyNote:
       'Ihr Passwort wird nie gespeichert. Nur das Sitzungs-Cookie wird lokal abgelegt.',
-    webLoginUrl: 'https://www.rewe.de/service/login/',
-    webLoginLabel: 'Auf REWE.de anmelden',
     fields: [
       {
         key: 'email',
