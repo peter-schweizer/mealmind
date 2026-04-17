@@ -7,9 +7,11 @@ import {
   Star,
   ChefHat,
   Plus,
+  Share2,
+  Check,
 } from 'lucide-react'
 import type { Recipe, Ingredient } from '../../types'
-import { rateRecipe, createRecipe, getProfile, toggleOwned } from '../../api'
+import { rateRecipe, createRecipe, getProfile, toggleOwned, shareRecipe } from '../../api'
 
 interface RecipeModalProps {
   recipe: Recipe
@@ -45,6 +47,21 @@ export default function RecipeModal({ recipe, onClose, onSaved }: RecipeModalPro
   const [saving, setSaving] = useState(false)
   const [addingToBook, setAddingToBook] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [sharing, setSharing] = useState(false)
+  const [shareCopied, setShareCopied] = useState(false)
+
+  const handleShare = async () => {
+    setSharing(true)
+    try {
+      const { token } = await shareRecipe(recipe.id)
+      const url = `${window.location.origin}/share/recipe/${token}`
+      await navigator.clipboard.writeText(url)
+      setShareCopied(true)
+      setTimeout(() => setShareCopied(false), 3000)
+    } finally {
+      setSharing(false)
+    }
+  }
 
   // Load owned ingredients from profile on mount
   useEffect(() => {
@@ -181,6 +198,21 @@ export default function RecipeModal({ recipe, onClose, onSaved }: RecipeModalPro
               ))}
             </div>
           </div>
+
+          {/* Share button */}
+          <button
+            onClick={handleShare}
+            disabled={sharing}
+            title="Rezept teilen"
+            className={[
+              'absolute top-4 right-14 w-8 h-8 rounded-full flex items-center justify-center transition-colors',
+              shareCopied ? 'bg-emerald-500' : 'bg-black/30 hover:bg-black/50',
+            ].join(' ')}
+          >
+            {sharing ? <Check size={14} className="text-white animate-spin" /> :
+             shareCopied ? <Check size={14} className="text-white" /> :
+             <Share2 size={14} className="text-white" />}
+          </button>
 
           {/* Close button */}
           <button

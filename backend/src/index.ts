@@ -8,6 +8,7 @@ import profileRouter from './routes/profile';
 import plannerRouter from './routes/planner';
 import sourcesRouter from './routes/sources';
 import searchRouter from './routes/search';
+import shareRouter from './routes/share';
 import { initDb } from './db';
 
 // ─── DB init — starts immediately, awaited by middleware before first request ──
@@ -66,6 +67,7 @@ app.use('/api/profile', profileRouter);
 app.use('/api/plans', plannerRouter);
 app.use('/api/sources', sourcesRouter);
 app.use('/api/search', searchRouter);
+app.use('/api/share', shareRouter); // public — no auth required
 
 app.get('/api/health', (_req, res) => {
   res.json({

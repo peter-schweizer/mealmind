@@ -324,4 +324,40 @@ export async function validateSourceSession(id: number): Promise<{ valid: boolea
   return data;
 }
 
+// ─── Share ────────────────────────────────────────────────────────────────────
+
+export interface ShareTokenResult {
+  token: string;
+  url: string;
+}
+
+export async function sharePlan(id: number): Promise<ShareTokenResult> {
+  const { data } = await api.post<ShareTokenResult>(`/share/plan/${id}`);
+  return data;
+}
+
+export async function revokePlanShare(id: number): Promise<void> {
+  await api.delete(`/share/plan/${id}`);
+}
+
+export async function shareRecipe(id: number): Promise<ShareTokenResult> {
+  const { data } = await api.post<ShareTokenResult>(`/share/recipe/${id}`);
+  return data;
+}
+
+export async function revokeRecipeShare(id: number): Promise<void> {
+  await api.delete(`/share/recipe/${id}`);
+}
+
+// Public — no auth needed
+export async function getSharedPlan(token: string): Promise<{ plan: WeekPlan; slots: MealSlot[] }> {
+  const { data } = await axios.get(`/api/share/plan/${token}`, { baseURL: '' });
+  return data;
+}
+
+export async function getSharedRecipe(token: string): Promise<Recipe> {
+  const { data } = await axios.get<Recipe>(`/api/share/recipe/${token}`, { baseURL: '' });
+  return data;
+}
+
 export default api;

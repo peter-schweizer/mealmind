@@ -34,7 +34,9 @@ export async function initDb(): Promise<void> {
   await pool.query(`
     ALTER TABLE user_profile ADD COLUMN IF NOT EXISTS clerk_user_id TEXT UNIQUE;
     ALTER TABLE week_plans    ADD COLUMN IF NOT EXISTS user_id TEXT;
+    ALTER TABLE week_plans    ADD COLUMN IF NOT EXISTS share_token TEXT UNIQUE;
     ALTER TABLE recipe_sources ADD COLUMN IF NOT EXISTS user_id TEXT;
+    ALTER TABLE recipes        ADD COLUMN IF NOT EXISTS share_token TEXT UNIQUE;
   `);
 
   // Replace global UNIQUE(url) with per-user UNIQUE(user_id, url)

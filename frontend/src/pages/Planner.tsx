@@ -9,6 +9,8 @@ import {
   Search,
   Loader2,
   Calendar,
+  Share2,
+  Check,
 } from 'lucide-react'
 import {
   DndContext,
@@ -36,6 +38,7 @@ import {
   addSlot,
   deleteSlot,
   getRecipes,
+  sharePlan,
 } from '../api'
 import RecipeModal from '../components/recipes/RecipeModal'
 
@@ -221,6 +224,22 @@ export default function Planner() {
   })
   const [pickerTarget, setPickerTarget] = useState<{ day: number; mealType: string } | null>(null)
   const [viewingRecipe, setViewingRecipe] = useState<Recipe | null>(null)
+  const [sharing, setSharing] = useState(false)
+  const [shareCopied, setShareCopied] = useState(false)
+
+  const handleShare = async () => {
+    if (!activePlan) return
+    setSharing(true)
+    try {
+      const { token } = await sharePlan(activePlan.id)
+      const url = `${window.location.origin}/share/plan/${token}`
+      await navigator.clipboard.writeText(url)
+      setShareCopied(true)
+      setTimeout(() => setShareCopied(false), 3000)
+    } finally {
+      setSharing(false)
+    }
+  }
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -353,6 +372,25 @@ export default function Planner() {
                 ))}
               </select>
             </div>
+          )}
+
+          {/* Share button */}
+          {activePlan && (
+            <button
+              onClick={handleShare}
+              disabled={sharing}
+              title="Link kopieren und teilen"
+              className={[
+                'flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-xl border transition-colors',
+                shareCopied
+                  ? 'bg-emerald-50 border-emerald-300 text-emerald-700'
+                  : 'bg-white border-sand-dark text-primary hover:bg-sand/30',
+              ].join(' ')}
+            >
+              {sharing ? <Loader2 size={15} className="animate-spin" /> :
+               shareCopied ? <Check size={15} /> : <Share2 size={15} />}
+              {shareCopied ? 'Link kopiert!' : 'Teilen'}
+            </button>
           )}
 
           <button
