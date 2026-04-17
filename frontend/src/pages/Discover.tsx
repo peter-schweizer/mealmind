@@ -124,12 +124,17 @@ function ExternalCard({ result, onImported }: { result: ExternalSearchResult; on
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function Discover() {
+  const PAGE_SIZE = 24
+
   const [recipes, setRecipes] = useState<Recipe[]>([])
   const [suggestions, setSuggestions] = useState<Recipe[]>([])
   const [recentRecipes, setRecentRecipes] = useState<Recipe[]>([])
   const [externalResults, setExternalResults] = useState<ExternalSearchResult[]>([])
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [hasMore, setHasMore] = useState(true)
+  const [offset, setOffset] = useState(0)
   const [suggestionsLoading, setSuggestionsLoading] = useState(true)
   const [recentLoading, setRecentLoading] = useState(true)
   const [externalLoading, setExternalLoading] = useState(false)
@@ -137,7 +142,11 @@ export default function Discover() {
     search: '',
     tags: [],
     source: '',
+    sort: 'newest',
   })
+
+  // Sentinel ref for IntersectionObserver (infinite scroll)
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
 
   // Debounce ref for external search
   const externalSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -146,26 +155,66 @@ export default function Discover() {
     new Set(recipes.filter((r) => r.source_name).map((r) => r.source_name!))
   )
 
-  // Local DB search
+  // Build API params from current filters
+  const buildParams = useCallback((currentOffset: number) => {
+    const params: Record<string, unknown> = {
+      limit: PAGE_SIZE,
+      offset: currentOffset,
+      sort: filters.sort,
+    }
+    if (filters.search) params.search = filters.search
+    if (filters.tags.length) params.tags = filters.tags.join(',')
+    if (filters.source) params.source = filters.source
+    return params
+  }, [filters])
+
+  // Initial / filter-change load — resets the list
   const fetchRecipes = useCallback(async () => {
     setLoading(true)
+    setOffset(0)
     try {
-      const params: Record<string, unknown> = {}
-      if (filters.search) params.search = filters.search
-      if (filters.tags.length) params.tags = filters.tags.join(',')
-      if (filters.source) params.source = filters.source
-      const data = await getRecipes(params)
+      const data = await getRecipes(buildParams(0))
       setRecipes(data)
+      setHasMore(data.length === PAGE_SIZE)
     } catch (err) {
       console.error('Failed to fetch recipes', err)
     } finally {
       setLoading(false)
     }
-  }, [filters])
+  }, [buildParams])
 
   useEffect(() => {
     fetchRecipes()
   }, [fetchRecipes])
+
+  // Load next page and append
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return
+    setLoadingMore(true)
+    const nextOffset = offset + PAGE_SIZE
+    try {
+      const data = await getRecipes(buildParams(nextOffset))
+      setRecipes((prev) => [...prev, ...data])
+      setOffset(nextOffset)
+      setHasMore(data.length === PAGE_SIZE)
+    } catch {
+      // silently ignore
+    } finally {
+      setLoadingMore(false)
+    }
+  }, [loadingMore, hasMore, offset, buildParams])
+
+  // IntersectionObserver — triggers loadMore when sentinel enters viewport
+  useEffect(() => {
+    const sentinel = sentinelRef.current
+    if (!sentinel) return
+    const observer = new IntersectionObserver(
+      (entries) => { if (entries[0]?.isIntersecting) loadMore() },
+      { rootMargin: '200px' }
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [loadMore])
 
   // External search — debounced, only when there's a search term
   useEffect(() => {
@@ -313,7 +362,9 @@ export default function Discover() {
             {isSearchActive ? 'In meiner Sammlung' : 'Alle Rezepte'}
           </h2>
           {!loading && (
-            <span className="text-sm text-gray-400">{recipes.length} Rezepte</span>
+            <span className="text-sm text-gray-400">
+              {recipes.length}{hasMore ? '+' : ''} Rezepte
+            </span>
           )}
         </div>
 
@@ -333,11 +384,30 @@ export default function Discover() {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {recipes.map((recipe) => (
-              <RecipeCard key={recipe.id} recipe={recipe} onSelect={setSelectedRecipe} />
-            ))}
-          </div>
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+              {recipes.map((recipe) => (
+                <RecipeCard key={recipe.id} recipe={recipe} onSelect={setSelectedRecipe} />
+              ))}
+            </div>
+
+            {/* Infinite scroll sentinel */}
+            <div ref={sentinelRef} className="h-4 mt-4" />
+
+            {/* Loading indicator */}
+            {loadingMore && (
+              <div className="flex justify-center py-6">
+                <Loader2 size={22} className="animate-spin text-primary/40" />
+              </div>
+            )}
+
+            {/* End of list */}
+            {!hasMore && recipes.length > PAGE_SIZE && (
+              <p className="text-center text-xs text-gray-300 py-4">
+                Alle {recipes.length} Rezepte geladen
+              </p>
+            )}
+          </>
         )}
       </section>
 

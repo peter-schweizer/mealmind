@@ -1,10 +1,13 @@
-import { Search, SlidersHorizontal } from 'lucide-react'
+import { Search, SlidersHorizontal, ArrowDownUp } from 'lucide-react'
 import { DIETARY_TAGS } from '../../types'
+
+export type SortOption = 'newest' | 'oldest' | 'fastest'
 
 export interface FilterState {
   search: string
   tags: string[]
   source: string
+  sort: SortOption
 }
 
 interface RecipeFilterProps {
@@ -25,6 +28,12 @@ const TAG_COLORS_ACTIVE: Record<string, string> = {
   Hochprotein: 'bg-orange-600 text-white border-orange-600',
 }
 
+const SORT_OPTIONS: { value: SortOption; label: string }[] = [
+  { value: 'newest',  label: 'Neueste' },
+  { value: 'oldest',  label: 'Älteste' },
+  { value: 'fastest', label: 'Schnellste' },
+]
+
 export default function RecipeFilter({ value, onChange, sources = [] }: RecipeFilterProps) {
   const toggleTag = (tag: string) => {
     const tags = value.tags.includes(tag)
@@ -36,8 +45,8 @@ export default function RecipeFilter({ value, onChange, sources = [] }: RecipeFi
   return (
     <div className="space-y-3">
       {/* Search row */}
-      <div className="flex gap-3 items-center">
-        <div className="relative flex-1">
+      <div className="flex gap-3 items-center flex-wrap">
+        <div className="relative flex-1 min-w-48">
           <Search
             size={16}
             className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
@@ -49,6 +58,25 @@ export default function RecipeFilter({ value, onChange, sources = [] }: RecipeFi
             placeholder="Rezepte suchen…"
             className="w-full pl-9 pr-4 py-2.5 text-sm bg-white border border-sand-dark rounded-xl focus:ring-2 focus:ring-primary/20 focus:border-primary/50 transition placeholder-gray-400"
           />
+        </div>
+
+        {/* Sort pills */}
+        <div className="flex items-center gap-1.5 bg-white border border-sand-dark rounded-xl px-2 py-1.5">
+          <ArrowDownUp size={13} className="text-gray-400 flex-shrink-0" />
+          {SORT_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => onChange({ ...value, sort: opt.value })}
+              className={[
+                'text-xs font-medium px-2.5 py-1 rounded-lg transition-all',
+                value.sort === opt.value
+                  ? 'bg-primary text-white'
+                  : 'text-gray-500 hover:bg-sand hover:text-primary',
+              ].join(' ')}
+            >
+              {opt.label}
+            </button>
+          ))}
         </div>
 
         {/* Source dropdown */}

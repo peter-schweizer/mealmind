@@ -50,7 +50,7 @@ export default function MyRecipes() {
   const [recipes, setRecipes] = useState<Recipe[]>([])
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null)
   const [loading, setLoading] = useState(true)
-  const [filters, setFilters] = useState<FilterState>({ search: '', tags: [], source: '' })
+  const [filters, setFilters] = useState<FilterState>({ search: '', tags: [], source: '', sort: 'newest' })
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [form, setForm] = useState<RecipeForm>(emptyForm)

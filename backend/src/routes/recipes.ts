@@ -53,7 +53,7 @@ router.get('/suggestions', async (req: Request, res: Response) => {
 
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const { search, tags, source, is_custom, since, limit } = req.query;
+    const { search, tags, source, is_custom, since, limit, offset, sort } = req.query;
 
     let sql = 'SELECT * FROM recipes WHERE 1=1';
     const params: unknown[] = [];
@@ -75,31 +75,38 @@ router.get('/', async (req: Request, res: Response) => {
       params.push(is_custom === 'true' || is_custom === '1');
     }
 
-    // Filter to recipes added after a given ISO timestamp (for "recently imported" views)
     if (since) {
       sql += ` AND created_at >= $${idx++}`;
       params.push(new Date(String(since)));
     }
 
-    sql += ' ORDER BY created_at DESC';
+    // Sort order
+    switch (String(sort ?? 'newest')) {
+      case 'oldest':  sql += ' ORDER BY created_at ASC';  break;
+      case 'fastest': sql += ' ORDER BY COALESCE(NULLIF(prep_time,0),9999) + COALESCE(NULLIF(cook_time,0),0) ASC, created_at DESC'; break;
+      default:        sql += ' ORDER BY created_at DESC'; break; // newest
+    }
 
-    // Optional hard limit (e.g. for "Zuletzt hinzugefügt" strip)
-    if (limit) {
-      const n = Math.min(parseInt(String(limit), 10), 200);
-      if (!isNaN(n) && n > 0) sql += ` LIMIT ${n}`;
+    // Tag filter happens in-memory (JSONB contains), so we need all matches first when paginating
+    // For tag-less queries we can apply LIMIT/OFFSET in SQL for efficiency
+    const hasTags = !!(tags && String(tags).trim());
+
+    const pageSize = Math.min(parseInt(String(limit ?? '24'), 10), 200);
+    const pageOffset = Math.max(parseInt(String(offset ?? '0'), 10), 0);
+
+    if (!hasTags) {
+      sql += ` LIMIT ${pageSize} OFFSET ${pageOffset}`;
     }
 
     let recipes = (await query<RawRecipe>(sql, params)).map(serializeRecipe);
 
-    if (tags) {
+    if (hasTags) {
       const tagList = String(tags).split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
-      if (tagList.length > 0) {
-        recipes = recipes.filter(r =>
-          tagList.every(tag =>
-            (r.dietary_tags as string[]).some(t => t.toLowerCase() === tag),
-          ),
-        );
-      }
+      recipes = recipes.filter(r =>
+        tagList.every(tag => (r.dietary_tags as string[]).some(t => t.toLowerCase() === tag)),
+      );
+      // Apply pagination after tag filtering
+      recipes = recipes.slice(pageOffset, pageOffset + pageSize);
     }
 
     res.json(recipes);
