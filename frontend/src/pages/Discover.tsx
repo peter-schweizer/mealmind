@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Sparkles, ChevronRight, Download, ExternalLink, Loader2, Check, AlertTriangle, ChefHat, Clock } from 'lucide-react'
+import { Sparkles, ChevronRight, Download, ExternalLink, Loader2, Check, AlertTriangle, ChefHat, Clock, History } from 'lucide-react'
 import type { Recipe } from '../types'
 import type { ExternalSearchResult } from '../api'
 import { getRecipes, getSuggestions, searchExternalRecipes, scrapeRecipe } from '../api'
@@ -126,10 +126,12 @@ function ExternalCard({ result, onImported }: { result: ExternalSearchResult; on
 export default function Discover() {
   const [recipes, setRecipes] = useState<Recipe[]>([])
   const [suggestions, setSuggestions] = useState<Recipe[]>([])
+  const [recentRecipes, setRecentRecipes] = useState<Recipe[]>([])
   const [externalResults, setExternalResults] = useState<ExternalSearchResult[]>([])
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null)
   const [loading, setLoading] = useState(true)
   const [suggestionsLoading, setSuggestionsLoading] = useState(true)
+  const [recentLoading, setRecentLoading] = useState(true)
   const [externalLoading, setExternalLoading] = useState(false)
   const [filters, setFilters] = useState<FilterState>({
     search: '',
@@ -200,6 +202,21 @@ export default function Discover() {
       .finally(() => setSuggestionsLoading(false))
   }, [])
 
+  // Fetch 8 most recently added recipes (for the "Zuletzt hinzugefügt" strip)
+  const fetchRecent = useCallback(async () => {
+    setRecentLoading(true)
+    try {
+      const data = await getRecipes({ limit: 8 })
+      setRecentRecipes(data)
+    } catch {
+      setRecentRecipes([])
+    } finally {
+      setRecentLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { fetchRecent() }, [fetchRecent])
+
   const isSearchActive = !!(filters.search || filters.tags.length || filters.source)
 
   return (
@@ -245,6 +262,38 @@ export default function Discover() {
           ) : (
             <div className="flex gap-4 overflow-x-auto scroll-strip pb-2 -mx-1 px-1">
               {suggestions.map((recipe) => (
+                <div key={recipe.id} className="flex-shrink-0 w-52">
+                  <RecipeCard recipe={recipe} onSelect={setSelectedRecipe} />
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* ── Zuletzt hinzugefügt strip — hidden when searching ── */}
+      {!isSearchActive && (recentRecipes.length > 0 || recentLoading) && (
+        <section className="mb-10">
+          <div className="flex items-center gap-2 mb-4">
+            <History size={18} className="text-primary/60" />
+            <h2
+              className="text-primary text-xl font-semibold"
+              style={{ fontFamily: '"Playfair Display", Georgia, serif' }}
+            >
+              Zuletzt hinzugefügt
+            </h2>
+            <ChevronRight size={16} className="text-gray-400 ml-auto" />
+          </div>
+
+          {recentLoading ? (
+            <div className="flex gap-4 overflow-x-auto scroll-strip pb-2">
+              {[...Array(5)].map((_, i) => (
+                <div key={i} className="flex-shrink-0 w-52 h-64 paper-card animate-pulse" />
+              ))}
+            </div>
+          ) : (
+            <div className="flex gap-4 overflow-x-auto scroll-strip pb-2 -mx-1 px-1">
+              {recentRecipes.map((recipe) => (
                 <div key={recipe.id} className="flex-shrink-0 w-52">
                   <RecipeCard recipe={recipe} onSelect={setSelectedRecipe} />
                 </div>

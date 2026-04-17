@@ -53,7 +53,7 @@ router.get('/suggestions', async (req: Request, res: Response) => {
 
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const { search, tags, source, is_custom } = req.query;
+    const { search, tags, source, is_custom, since, limit } = req.query;
 
     let sql = 'SELECT * FROM recipes WHERE 1=1';
     const params: unknown[] = [];
@@ -75,7 +75,19 @@ router.get('/', async (req: Request, res: Response) => {
       params.push(is_custom === 'true' || is_custom === '1');
     }
 
+    // Filter to recipes added after a given ISO timestamp (for "recently imported" views)
+    if (since) {
+      sql += ` AND created_at >= $${idx++}`;
+      params.push(new Date(String(since)));
+    }
+
     sql += ' ORDER BY created_at DESC';
+
+    // Optional hard limit (e.g. for "Zuletzt hinzugefügt" strip)
+    if (limit) {
+      const n = Math.min(parseInt(String(limit), 10), 200);
+      if (!isNaN(n) && n > 0) sql += ` LIMIT ${n}`;
+    }
 
     let recipes = (await query<RawRecipe>(sql, params)).map(serializeRecipe);
 
