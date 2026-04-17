@@ -3,6 +3,8 @@ import { query, queryOne } from '../db';
 import { scrapeChefkoch, discoverChefkochUrls } from '../scrapers/chefkoch';
 import { scrapeRewe, discoverReweUrls } from '../scrapers/rewe';
 import { scrapeGeneric } from '../scrapers/generic';
+import { discoverViaSitemap, looksLikeRecipeUrl, MINER_UA } from '../scrapers/sitemap';
+import { extractJsonLdRecipe } from '../scrapers/jsonld';
 import {
   getSourceDefinition,
   getAllSourceDefinitions,
@@ -232,7 +234,8 @@ router.post('/:id/sync', async (req: Request, res: Response) => {
 
   await query("UPDATE recipe_sources SET status='syncing', error_message=NULL WHERE id=$1", [sourceId]);
 
-  const limit = parseInt(String(req.query['limit'] || '10'), 10);
+  // How many new recipes to import per sync (caller can override with ?limit=N, max 100)
+  const limit = Math.min(parseInt(String(req.query['limit'] || '20'), 10), 100);
 
   const def = getSourceDefinition(source.scraper_type);
   let extraHeaders: Record<string, string> = {};
@@ -243,22 +246,22 @@ router.post('/:id/sync', async (req: Request, res: Response) => {
   }
 
   try {
-    const recipeUrls = await discoverRecipeUrls(source.url, source.scraper_type, limit);
+    // ── 1. Discover recipe URLs ──────────────────────────────────────────────
+    const recipeUrls = await discoverRecipeUrls(source.url, source.scraper_type);
 
+    // ── 2. Filter out already-known URLs ────────────────────────────────────
     const existingRows = await query<{ source_url: string }>(
-      "SELECT source_url FROM recipes WHERE source_url != ''",
+      "SELECT source_url FROM recipes WHERE source_url IS NOT NULL AND source_url != ''",
     );
-    const knownUrls = new Set(existingRows.map(r => r.source_url));
-    const newUrls = recipeUrls.filter(u => !knownUrls.has(u));
+    const knownUrls = new Set(existingRows.map((r) => r.source_url));
+    const newUrls = recipeUrls.filter((u) => !knownUrls.has(u));
 
-    const results: Array<{ url: string; status: 'success' | 'error'; error?: string; title?: string }> = [];
+    // ── 3. Scrape each new URL ───────────────────────────────────────────────
+    const results: Array<{ url: string; status: 'success' | 'error'; method?: string; error?: string; title?: string }> = [];
 
     for (const url of newUrls.slice(0, limit)) {
       try {
-        let scraped;
-        if (source.scraper_type === 'chefkoch') scraped = await scrapeChefkoch(url, extraHeaders);
-        else if (source.scraper_type === 'rewe') scraped = await scrapeRewe(url, extraHeaders);
-        else scraped = await scrapeGeneric(url);
+        const scraped = await scrapeWithFallback(url, source.scraper_type, extraHeaders);
 
         await query(`
           INSERT INTO recipes
@@ -267,21 +270,33 @@ router.post('/:id/sync', async (req: Request, res: Response) => {
           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,FALSE)
           ON CONFLICT (source_url) DO NOTHING
         `, [
-          scraped.title, scraped.description, scraped.image_url, url, source.name,
-          scraped.prep_time, scraped.cook_time, scraped.servings,
-          JSON.stringify(scraped.dietary_tags),
-          JSON.stringify(scraped.ingredients),
-          JSON.stringify(scraped.instructions),
+          scraped.recipe.title,
+          scraped.recipe.description,
+          scraped.recipe.image_url,
+          url,
+          source.name,
+          scraped.recipe.prep_time,
+          scraped.recipe.cook_time,
+          scraped.recipe.servings,
+          JSON.stringify(scraped.recipe.dietary_tags),
+          JSON.stringify(scraped.recipe.ingredients),
+          JSON.stringify(scraped.recipe.instructions),
         ]);
 
-        results.push({ url, status: 'success', title: scraped.title });
-        await sleep(500);
+        results.push({ url, status: 'success', method: scraped.method, title: scraped.recipe.title });
+        await sleep(2_000); // polite rate limit between imports
       } catch (err: unknown) {
-        results.push({ url, status: 'error', error: err instanceof Error ? err.message : 'Unknown error' });
+        results.push({
+          url,
+          status: 'error',
+          error: err instanceof Error ? err.message : 'Unknown error',
+        });
+        await sleep(500);
       }
     }
 
-    const successCount = results.filter(r => r.status === 'success').length;
+    const successCount = results.filter((r) => r.status === 'success').length;
+    const jsonLdCount = results.filter((r) => r.method === 'jsonld').length;
 
     const [updated] = await query<RawSource>(`
       UPDATE recipe_sources SET
@@ -290,7 +305,14 @@ router.post('/:id/sync', async (req: Request, res: Response) => {
       RETURNING *
     `, [sourceId]);
 
-    res.json({ source: serializeSource(updated), discovered: recipeUrls.length, new: newUrls.length, scraped: successCount, results });
+    res.json({
+      source: serializeSource(updated),
+      discovered: recipeUrls.length,
+      new: newUrls.length,
+      scraped: successCount,
+      jsonld_used: jsonLdCount,
+      results,
+    });
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : 'Sync failed';
     await query("UPDATE recipe_sources SET status='error', error_message=$1 WHERE id=$2", [errorMsg, sourceId]);
@@ -301,47 +323,95 @@ router.post('/:id/sync', async (req: Request, res: Response) => {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function discoverRecipeUrls(baseUrl: string, scraperType: string, limit: number): Promise<string[]> {
-  if (scraperType === 'chefkoch') return discoverChefkochUrls(baseUrl, limit);
-  if (scraperType === 'rewe') return discoverReweUrls(baseUrl, limit);
+/**
+ * Discover recipe URLs for a source.
+ *
+ * Priority:
+ *   1. Sitemap crawler (robots.txt-compliant, recursive, for all types)
+ *   2. Site-specific URL lists as fallback (Chefkoch / REWE API search)
+ *   3. Homepage link extraction as last resort
+ */
+async function discoverRecipeUrls(baseUrl: string, scraperType: string): Promise<string[]> {
+  // Try sitemap first — works for all sources
+  const sitemapUrls = await discoverViaSitemap(baseUrl, { maxUrls: 500 });
+  if (sitemapUrls.length > 0) return sitemapUrls;
 
-  const urls = await tryGenericSitemap(baseUrl, limit);
-  if (urls.length > 0) return urls;
-  return discoverFromHomepage(baseUrl, limit);
+  // Fallback to site-specific discovery
+  console.log(`[sync] No sitemap results for ${baseUrl}, trying site-specific discovery`);
+  if (scraperType === 'chefkoch') return discoverChefkochUrls(baseUrl, 100);
+  if (scraperType === 'rewe') return discoverReweUrls(baseUrl, 100);
+
+  // Last resort: extract recipe-looking links from the homepage
+  return discoverFromHomepage(baseUrl, 100);
 }
 
-async function tryGenericSitemap(baseUrl: string, limit: number): Promise<string[]> {
-  const { protocol, host } = new URL(baseUrl);
-  for (const sitemapUrl of [`${protocol}//${host}/sitemap.xml`, `${protocol}//${host}/sitemap-recipes.xml`]) {
-    try {
-      const response = await axios.get<string>(sitemapUrl, { timeout: 8000, headers: { 'User-Agent': 'MealMindBot/1.0' } });
-      const $ = cheerio.load(response.data, { xmlMode: true });
-      const urls: string[] = [];
-      $('url loc').each((_, el) => {
-        const loc = $(el).text().trim();
-        if (loc && (loc.includes('rezept') || loc.includes('recipe'))) urls.push(loc);
-      });
-      if (urls.length > 0) return urls.slice(0, limit);
-    } catch { /* try next */ }
+interface ScrapeResult {
+  recipe: import('../scrapers/generic').ScrapedRecipe;
+  method: 'jsonld' | 'chefkoch' | 'rewe' | 'generic';
+}
+
+/**
+ * Scrape a single recipe URL.
+ *
+ * Strategy:
+ *   1. Fetch the page HTML once
+ *   2. Try JSON-LD extraction (universal, most reliable)
+ *   3. If confidence is high → done
+ *   4. Otherwise fall back to the site-specific scraper for richer data
+ */
+async function scrapeWithFallback(
+  url: string,
+  scraperType: string,
+  extraHeaders: Record<string, string>,
+): Promise<ScrapeResult> {
+  // Fetch HTML once — reuse for both JSON-LD and fallback HTML parsers
+  const { data: html } = await axios.get<string>(url, {
+    timeout: 15_000,
+    headers: {
+      'User-Agent': MINER_UA,
+      Accept: 'text/html,application/xhtml+xml',
+      ...extraHeaders,
+    },
+    responseType: 'text',
+    maxRedirects: 5,
+  });
+
+  // ── Attempt 1: JSON-LD (Schema.org — no site-specific knowledge needed) ──
+  const jsonLdResult = extractJsonLdRecipe(html, url);
+  if (jsonLdResult && jsonLdResult.confidence === 'high') {
+    return { recipe: jsonLdResult.recipe, method: 'jsonld' };
   }
-  return [];
+
+  // ── Attempt 2: site-specific scraper (may return richer data) ─────────────
+  try {
+    let recipe;
+    if (scraperType === 'chefkoch') recipe = await scrapeChefkoch(url, extraHeaders);
+    else if (scraperType === 'rewe') recipe = await scrapeRewe(url, extraHeaders);
+    else recipe = await scrapeGeneric(url);
+    return { recipe, method: scraperType as ScrapeResult['method'] };
+  } catch {
+    // Site-specific scraper failed — use JSON-LD result even if medium/low confidence
+    if (jsonLdResult) return { recipe: jsonLdResult.recipe, method: 'jsonld' };
+    throw new Error(`Could not extract recipe from ${url}`);
+  }
 }
 
 async function discoverFromHomepage(baseUrl: string, limit: number): Promise<string[]> {
   try {
-    const response = await axios.get<string>(baseUrl, { timeout: 10000, headers: { 'User-Agent': 'MealMindBot/1.0' } });
-    const $ = cheerio.load(response.data);
-    const { protocol, host } = new URL(baseUrl);
-    const baseOrigin = `${protocol}//${host}`;
+    const { data: html } = await axios.get<string>(baseUrl, {
+      timeout: 12_000,
+      headers: { 'User-Agent': MINER_UA },
+    });
+    const $ = cheerio.load(html);
+    const { origin } = new URL(baseUrl);
     const urls = new Set<string>();
     $('a[href]').each((_, el) => {
-      const href = $(el).attr('href') || '';
-      if (href.includes('rezept') || href.includes('recipe')) {
-        urls.add((href.startsWith('http') ? href : `${baseOrigin}${href}`).split('?')[0]);
-      }
+      const href = $(el).attr('href') ?? '';
+      const full = href.startsWith('http') ? href : `${origin}${href}`;
+      if (looksLikeRecipeUrl(full.split('?')[0])) urls.add(full.split('?')[0]);
     });
     return [...urls].slice(0, limit);
   } catch {
