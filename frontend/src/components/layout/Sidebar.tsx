@@ -109,7 +109,7 @@ export default function Sidebar() {
             </button>
           </SignInButton>
         </SignedOut>
-        <p className="text-xs text-white/20 text-center mt-3">v1.1.0</p>
+        <p className="text-xs text-white/20 text-center mt-3">v1.2.0</p>
       </div>
     </aside>
   )
