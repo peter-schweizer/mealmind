@@ -225,105 +225,219 @@ router.post('/:id/validate-session', async (req: Request, res: Response) => {
   }
 });
 
-// ─── POST /api/sources/:id/sync ───────────────────────────────────────────────
+// ─── POST /api/sources/:id/discover ──────────────────────────────────────────
+//
+// Step 1 of the two-step sync flow.
+// Discovers up to 30 new recipe URLs and fetches their metadata via JSON-LD.
+// NOTHING is written to the database — returns a preview list for the user
+// to review and select from.
+
+router.post('/:id/discover', async (req: Request, res: Response) => {
+  const sourceId = parseInt(req.params['id'], 10);
+  const source = await queryOne<RawSource>('SELECT * FROM recipe_sources WHERE id = $1', [sourceId]);
+  if (!source) return res.status(404).json({ error: 'Source not found' });
+
+  const PREVIEW_LIMIT = 30;
+
+  const def = getSourceDefinition(source.scraper_type);
+  let extraHeaders: Record<string, string> = {};
+  if (source.auth_status === 'authenticated' && source.auth_data && def.authHeaders) {
+    try { extraHeaders = def.authHeaders(JSON.parse(source.auth_data) as StoredAuthData); } catch { /* ignore */ }
+  }
+
+  try {
+    // 1. Find candidate URLs via sitemap / site-specific discovery
+    const allUrls = await discoverRecipeUrls(source.url, source.scraper_type);
+
+    // 2. Filter out URLs already in the DB
+    const existingRows = await query<{ source_url: string }>(
+      "SELECT source_url FROM recipes WHERE source_url IS NOT NULL AND source_url != ''",
+    );
+    const knownUrls = new Set(existingRows.map((r) => r.source_url));
+    const newUrls = allUrls.filter((u) => !knownUrls.has(u)).slice(0, PREVIEW_LIMIT);
+
+    // 3. Fetch lightweight metadata for each URL (JSON-LD only — fast, no full scrape)
+    const previews: RecipePreview[] = [];
+    for (const url of newUrls) {
+      try {
+        const preview = await fetchPreview(url, source.name, extraHeaders);
+        if (preview) previews.push(preview);
+        await sleep(1_000); // polite rate limit
+      } catch {
+        // Skip URLs that fail to load — don't surface errors to the user
+      }
+    }
+
+    res.json({
+      total_discovered: allUrls.length,
+      new_found: newUrls.length,
+      previews,
+    });
+  } catch (err: unknown) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Discovery failed' });
+  }
+});
+
+// ─── POST /api/sources/:id/import ─────────────────────────────────────────────
+//
+// Step 2 of the two-step sync flow.
+// Receives { urls: string[] } of user-selected URLs and imports them fully.
+
+router.post('/:id/import', async (req: Request, res: Response) => {
+  const sourceId = parseInt(req.params['id'], 10);
+  const source = await queryOne<RawSource>('SELECT * FROM recipe_sources WHERE id = $1', [sourceId]);
+  if (!source) return res.status(404).json({ error: 'Source not found' });
+
+  const urls: string[] = Array.isArray(req.body?.urls) ? (req.body.urls as string[]) : [];
+  if (urls.length === 0) return res.status(400).json({ error: 'No URLs provided' });
+  if (urls.length > 30) return res.status(400).json({ error: 'Maximum 30 URLs per import' });
+
+  await query("UPDATE recipe_sources SET status='syncing', error_message=NULL WHERE id=$1", [sourceId]);
+
+  const def = getSourceDefinition(source.scraper_type);
+  let extraHeaders: Record<string, string> = {};
+  if (source.auth_status === 'authenticated' && source.auth_data && def.authHeaders) {
+    try { extraHeaders = def.authHeaders(JSON.parse(source.auth_data) as StoredAuthData); } catch { /* ignore */ }
+  }
+
+  const results: Array<{ url: string; status: 'success' | 'error'; title?: string; error?: string }> = [];
+
+  for (const url of urls) {
+    try {
+      const scraped = await scrapeWithFallback(url, source.scraper_type, extraHeaders);
+
+      await query(`
+        INSERT INTO recipes
+          (title, description, image_url, source_url, source_name, prep_time, cook_time,
+           servings, dietary_tags, ingredients, instructions, is_custom)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,FALSE)
+        ON CONFLICT (source_url) DO NOTHING
+      `, [
+        scraped.recipe.title, scraped.recipe.description, scraped.recipe.image_url,
+        url, source.name, scraped.recipe.prep_time, scraped.recipe.cook_time,
+        scraped.recipe.servings,
+        JSON.stringify(scraped.recipe.dietary_tags),
+        JSON.stringify(scraped.recipe.ingredients),
+        JSON.stringify(scraped.recipe.instructions),
+      ]);
+
+      results.push({ url, status: 'success', title: scraped.recipe.title });
+      await sleep(2_000); // polite rate limit
+    } catch (err: unknown) {
+      results.push({ url, status: 'error', error: err instanceof Error ? err.message : 'Unknown' });
+      await sleep(500);
+    }
+  }
+
+  const successCount = results.filter((r) => r.status === 'success').length;
+
+  const [updated] = await query<RawSource>(`
+    UPDATE recipe_sources SET status='active', last_sync=NOW(), error_message=NULL
+    WHERE id=$1 RETURNING *
+  `, [sourceId]);
+
+  res.json({ source: serializeSource(updated), imported: successCount, results });
+});
+
+// ─── POST /api/sources/:id/sync (legacy — kept for backwards compat) ──────────
 
 router.post('/:id/sync', async (req: Request, res: Response) => {
+  // Redirect internally: discover → import all
   const sourceId = parseInt(req.params['id'], 10);
   const source = await queryOne<RawSource>('SELECT * FROM recipe_sources WHERE id = $1', [sourceId]);
   if (!source) return res.status(404).json({ error: 'Source not found' });
 
   await query("UPDATE recipe_sources SET status='syncing', error_message=NULL WHERE id=$1", [sourceId]);
 
-  // How many new recipes to import per sync (caller can override with ?limit=N, max 100)
-  const limit = Math.min(parseInt(String(req.query['limit'] || '20'), 10), 100);
-
   const def = getSourceDefinition(source.scraper_type);
   let extraHeaders: Record<string, string> = {};
   if (source.auth_status === 'authenticated' && source.auth_data && def.authHeaders) {
-    try {
-      extraHeaders = def.authHeaders(JSON.parse(source.auth_data) as StoredAuthData);
-    } catch { /* ignore */ }
+    try { extraHeaders = def.authHeaders(JSON.parse(source.auth_data) as StoredAuthData); } catch { /* ignore */ }
   }
 
   try {
-    // ── 1. Discover recipe URLs ──────────────────────────────────────────────
-    const recipeUrls = await discoverRecipeUrls(source.url, source.scraper_type);
-
-    // ── 2. Filter out already-known URLs ────────────────────────────────────
+    const allUrls = await discoverRecipeUrls(source.url, source.scraper_type);
     const existingRows = await query<{ source_url: string }>(
       "SELECT source_url FROM recipes WHERE source_url IS NOT NULL AND source_url != ''",
     );
     const knownUrls = new Set(existingRows.map((r) => r.source_url));
-    const newUrls = recipeUrls.filter((u) => !knownUrls.has(u));
+    const newUrls = allUrls.filter((u) => !knownUrls.has(u)).slice(0, 30);
 
-    // ── 3. Scrape each new URL ───────────────────────────────────────────────
-    const results: Array<{ url: string; status: 'success' | 'error'; method?: string; error?: string; title?: string }> = [];
-
-    for (const url of newUrls.slice(0, limit)) {
+    const results: Array<{ url: string; status: string; title?: string }> = [];
+    for (const url of newUrls) {
       try {
         const scraped = await scrapeWithFallback(url, source.scraper_type, extraHeaders);
-
         await query(`
           INSERT INTO recipes
-            (title, description, image_url, source_url, source_name, prep_time, cook_time, servings,
-             dietary_tags, ingredients, instructions, is_custom)
+            (title, description, image_url, source_url, source_name, prep_time, cook_time,
+             servings, dietary_tags, ingredients, instructions, is_custom)
           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,FALSE)
           ON CONFLICT (source_url) DO NOTHING
         `, [
-          scraped.recipe.title,
-          scraped.recipe.description,
-          scraped.recipe.image_url,
-          url,
-          source.name,
-          scraped.recipe.prep_time,
-          scraped.recipe.cook_time,
+          scraped.recipe.title, scraped.recipe.description, scraped.recipe.image_url,
+          url, source.name, scraped.recipe.prep_time, scraped.recipe.cook_time,
           scraped.recipe.servings,
           JSON.stringify(scraped.recipe.dietary_tags),
           JSON.stringify(scraped.recipe.ingredients),
           JSON.stringify(scraped.recipe.instructions),
         ]);
-
-        results.push({ url, status: 'success', method: scraped.method, title: scraped.recipe.title });
-        await sleep(2_000); // polite rate limit between imports
-      } catch (err: unknown) {
-        results.push({
-          url,
-          status: 'error',
-          error: err instanceof Error ? err.message : 'Unknown error',
-        });
-        await sleep(500);
-      }
+        results.push({ url, status: 'success', title: scraped.recipe.title });
+        await sleep(2_000);
+      } catch { results.push({ url, status: 'error' }); await sleep(500); }
     }
 
-    const successCount = results.filter((r) => r.status === 'success').length;
-    const jsonLdCount = results.filter((r) => r.method === 'jsonld').length;
-
-    const [updated] = await query<RawSource>(`
-      UPDATE recipe_sources SET
-        status='active', last_sync=NOW(), error_message=NULL
-      WHERE id=$1
-      RETURNING *
-    `, [sourceId]);
-
-    res.json({
-      source: serializeSource(updated),
-      discovered: recipeUrls.length,
-      new: newUrls.length,
-      scraped: successCount,
-      jsonld_used: jsonLdCount,
-      results,
-    });
+    const [updated] = await query<RawSource>(
+      "UPDATE recipe_sources SET status='active', last_sync=NOW(), error_message=NULL WHERE id=$1 RETURNING *",
+      [sourceId],
+    );
+    res.json({ source: serializeSource(updated), discovered: allUrls.length, scraped: results.filter(r => r.status === 'success').length });
   } catch (err: unknown) {
-    const errorMsg = err instanceof Error ? err.message : 'Sync failed';
-    await query("UPDATE recipe_sources SET status='error', error_message=$1 WHERE id=$2", [errorMsg, sourceId]);
-    res.status(500).json({ error: errorMsg });
+    const msg = err instanceof Error ? err.message : 'Sync failed';
+    await query("UPDATE recipe_sources SET status='error', error_message=$1 WHERE id=$2", [msg, sourceId]);
+    res.status(500).json({ error: msg });
   }
 });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+export interface RecipePreview {
+  url: string;
+  title: string;
+  image_url?: string;
+  description?: string;
+  prep_time?: number;
+  servings?: number;
+  source_name: string;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Fetch lightweight recipe metadata for a URL without writing to DB. */
+async function fetchPreview(
+  url: string,
+  sourceName: string,
+  extraHeaders: Record<string, string>,
+): Promise<RecipePreview | null> {
+  const { data: html } = await axios.get<string>(url, {
+    timeout: 10_000,
+    headers: { 'User-Agent': MINER_UA, Accept: 'text/html,application/xhtml+xml', ...extraHeaders },
+    responseType: 'text',
+    maxRedirects: 5,
+  });
+  const result = extractJsonLdRecipe(html, url);
+  if (!result || !result.recipe.title) return null;
+  const { recipe } = result;
+  return {
+    url,
+    title: recipe.title,
+    image_url: recipe.image_url || undefined,
+    description: recipe.description || undefined,
+    prep_time: recipe.prep_time || undefined,
+    servings: recipe.servings || undefined,
+    source_name: sourceName,
+  };
 }
 
 /**

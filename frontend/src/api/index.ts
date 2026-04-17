@@ -277,6 +277,35 @@ export async function syncSource(id: number): Promise<{ source: RecipeSource; sc
   return data;
 }
 
+export interface RecipePreview {
+  url: string;
+  title: string;
+  image_url?: string;
+  description?: string;
+  prep_time?: number;
+  servings?: number;
+  source_name: string;
+}
+
+export interface DiscoverResult {
+  total_discovered: number;
+  new_found: number;
+  previews: RecipePreview[];
+}
+
+export async function discoverSource(id: number): Promise<DiscoverResult> {
+  const { data } = await api.post<DiscoverResult>(`/sources/${id}/discover`);
+  return data;
+}
+
+export async function importRecipes(
+  id: number,
+  urls: string[],
+): Promise<{ source: RecipeSource; imported: number }> {
+  const { data } = await api.post(`/sources/${id}/import`, { urls });
+  return data;
+}
+
 export async function loginSource(
   id: number,
   credentials: Record<string, string>

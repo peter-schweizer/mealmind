@@ -24,13 +24,14 @@ import {
   Check,
 } from 'lucide-react'
 import type { RecipeSource, SourceDefinition, AuthConfig } from '../types'
-import type { ExternalSearchResult, SearchSource } from '../api'
+import type { ExternalSearchResult, SearchSource, RecipePreview } from '../api'
 import {
   getSources,
   getSourceRegistry,
   addSource,
   deleteSource,
-  syncSource,
+  discoverSource,
+  importRecipes,
   loginSource,
   logoutSource,
   searchExternalRecipes,
@@ -219,6 +220,197 @@ function LoginModal({ source, authConfig, onClose, onSuccess }: LoginModalProps)
   )
 }
 
+// ─── Sync preview modal ───────────────────────────────────────────────────────
+
+interface SyncPreviewModalProps {
+  source: RecipeSource
+  previews: RecipePreview[]
+  totalDiscovered: number
+  onClose: () => void
+  onImport: (urls: string[]) => void
+  importing: boolean
+}
+
+function SyncPreviewModal({
+  source,
+  previews,
+  totalDiscovered,
+  onClose,
+  onImport,
+  importing,
+}: SyncPreviewModalProps) {
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(previews.map((p) => p.url)))
+
+  const toggleAll = () => {
+    if (selected.size === previews.length) setSelected(new Set())
+    else setSelected(new Set(previews.map((p) => p.url)))
+  }
+
+  const toggle = (url: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      next.has(url) ? next.delete(url) : next.add(url)
+      return next
+    })
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ backgroundColor: 'rgba(15,25,20,0.72)', backdropFilter: 'blur(4px)' }}
+      onClick={(e) => e.target === e.currentTarget && !importing && onClose()}
+    >
+      <div className="modal-content bg-cream rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh]">
+        {/* Header */}
+        <div className="flex items-center justify-between p-6 border-b border-sand-dark/30 flex-shrink-0">
+          <div>
+            <h2
+              className="text-primary text-xl font-semibold"
+              style={{ fontFamily: '"Playfair Display", Georgia, serif' }}
+            >
+              Neue Rezepte gefunden
+            </h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {totalDiscovered} URLs entdeckt · {previews.length} neue Rezepte ·{' '}
+              <span className="font-medium text-primary/70">{source.name}</span>
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            disabled={importing}
+            className="w-8 h-8 rounded-full bg-sand/60 hover:bg-sand flex items-center justify-center text-gray-500 transition-colors disabled:opacity-40"
+          >
+            <X size={15} />
+          </button>
+        </div>
+
+        {/* Selection toolbar */}
+        <div className="flex items-center justify-between px-6 py-3 border-b border-sand-dark/20 flex-shrink-0 bg-sand/30">
+          <button
+            onClick={toggleAll}
+            className="text-xs font-semibold text-primary/70 hover:text-primary transition-colors"
+          >
+            {selected.size === previews.length ? 'Alle abwählen' : 'Alle auswählen'}
+          </button>
+          <span className="text-xs text-gray-400">
+            {selected.size} von {previews.length} ausgewählt
+          </span>
+        </div>
+
+        {/* Recipe list */}
+        <div className="overflow-y-auto flex-1 p-4 space-y-2">
+          {previews.length === 0 ? (
+            <div className="text-center py-12">
+              <Search size={28} className="text-gray-200 mx-auto mb-3" />
+              <p className="text-gray-400 text-sm">Keine neuen Rezepte gefunden.</p>
+              <p className="text-gray-300 text-xs mt-1">Alle Rezepte dieser Quelle sind bereits importiert.</p>
+            </div>
+          ) : (
+            previews.map((preview) => {
+              const isSelected = selected.has(preview.url)
+              return (
+                <label
+                  key={preview.url}
+                  className={[
+                    'flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all',
+                    isSelected
+                      ? 'border-primary/30 bg-primary/5'
+                      : 'border-sand-dark/30 bg-white/50 hover:bg-sand/40',
+                  ].join(' ')}
+                >
+                  {/* Checkbox */}
+                  <div
+                    className={[
+                      'w-5 h-5 rounded flex items-center justify-center flex-shrink-0 border transition-colors',
+                      isSelected ? 'bg-primary border-primary' : 'border-sand-dark bg-white',
+                    ].join(' ')}
+                  >
+                    {isSelected && <Check size={11} className="text-white" />}
+                  </div>
+
+                  {/* Thumbnail */}
+                  <div className="w-14 h-14 rounded-lg overflow-hidden flex-shrink-0 bg-sand">
+                    {preview.image_url ? (
+                      <img
+                        src={preview.image_url}
+                        alt={preview.title}
+                        className="w-full h-full object-cover"
+                        onError={(e) => { e.currentTarget.style.display = 'none' }}
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <ChefHat size={20} className="text-primary/20" />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Info */}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-primary truncate">{preview.title}</p>
+                    {preview.description && (
+                      <p className="text-xs text-gray-400 line-clamp-1 mt-0.5">{preview.description}</p>
+                    )}
+                    <div className="flex items-center gap-3 mt-1">
+                      {preview.prep_time ? (
+                        <span className="text-xs text-gray-400 flex items-center gap-1">
+                          <Clock size={10} /> {preview.prep_time} Min.
+                        </span>
+                      ) : null}
+                      {preview.servings ? (
+                        <span className="text-xs text-gray-400">{preview.servings} Port.</span>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  {/* External link */}
+                  <a
+                    href={preview.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="w-7 h-7 flex items-center justify-center text-gray-300 hover:text-accent rounded-lg hover:bg-sand transition-colors flex-shrink-0"
+                  >
+                    <ExternalLink size={13} />
+                  </a>
+
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => toggle(preview.url)}
+                    className="sr-only"
+                  />
+                </label>
+              )
+            })
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="p-4 border-t border-sand-dark/30 flex items-center gap-3 flex-shrink-0">
+          <button
+            onClick={onClose}
+            disabled={importing}
+            className="flex-1 py-2.5 text-sm font-semibold rounded-xl border border-sand-dark text-gray-500 hover:bg-sand transition-colors disabled:opacity-40"
+          >
+            Abbrechen
+          </button>
+          <button
+            onClick={() => onImport([...selected])}
+            disabled={importing || selected.size === 0}
+            className="flex-[2] py-2.5 bg-primary text-white text-sm font-semibold rounded-xl hover:bg-primary/90 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+          >
+            {importing ? (
+              <><Loader2 size={15} className="animate-spin" /> Importiere {selected.size} Rezepte…</>
+            ) : (
+              <><Download size={15} /> {selected.size} Rezept{selected.size !== 1 ? 'e' : ''} importieren</>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Source card ──────────────────────────────────────────────────────────────
 
 interface SourceCardProps {
@@ -228,25 +420,43 @@ interface SourceCardProps {
 }
 
 function SourceCard({ source, onUpdate, onDelete }: SourceCardProps) {
-  const [syncing, setSyncing] = useState(false)
-  const [syncResult, setSyncResult] = useState<{ scraped: number; discovered: number } | null>(null)
+  const [discovering, setDiscovering] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [previews, setPreviews] = useState<RecipePreview[] | null>(null)
+  const [totalDiscovered, setTotalDiscovered] = useState(0)
+  const [importResult, setImportResult] = useState<{ imported: number } | null>(null)
   const [showLoginModal, setShowLoginModal] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
   const [expanded, setExpanded] = useState(false)
 
-  const handleSync = async () => {
-    setSyncing(true)
-    setSyncResult(null)
+  const handleDiscover = async () => {
+    setDiscovering(true)
+    setImportResult(null)
     try {
-      const result = await syncSource(source.id)
-      onUpdate(result.source)
-      setSyncResult({ scraped: result.scraped, discovered: result.discovered })
+      const result = await discoverSource(source.id)
+      setTotalDiscovered(result.total_discovered)
+      setPreviews(result.previews)
     } catch {
-      // error already reflected in source.status
+      // error shown via source.status
     } finally {
-      setSyncing(false)
+      setDiscovering(false)
     }
   }
+
+  const handleImport = async (urls: string[]) => {
+    setImporting(true)
+    try {
+      const result = await importRecipes(source.id, urls)
+      onUpdate(result.source)
+      setImportResult({ imported: result.imported })
+      setPreviews(null)
+    } catch {
+      // ignore — source status will reflect error
+    } finally {
+      setImporting(false)
+    }
+  }
+
 
   const handleLogout = async () => {
     setLoggingOut(true)
@@ -323,15 +533,15 @@ function SourceCard({ source, onUpdate, onDelete }: SourceCardProps) {
               )
             )}
 
-            {/* Sync */}
+            {/* Discover / Sync */}
             <button
-              onClick={handleSync}
-              disabled={syncing}
-              title="Synchronisieren"
+              onClick={handleDiscover}
+              disabled={discovering}
+              title="Neue Rezepte suchen"
               className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/10 text-primary text-xs font-semibold rounded-lg hover:bg-primary/20 disabled:opacity-50 transition-colors"
             >
-              <RefreshCw size={12} className={syncing ? 'animate-spin' : ''} />
-              {syncing ? 'Sync…' : 'Sync'}
+              <RefreshCw size={12} className={discovering ? 'animate-spin' : ''} />
+              {discovering ? 'Suche…' : 'Sync'}
             </button>
 
             {/* Expand details */}
@@ -384,13 +594,25 @@ function SourceCard({ source, onUpdate, onDelete }: SourceCardProps) {
           </p>
         )}
 
-        {/* Sync result flash */}
-        {syncResult && (
-          <p className="text-xs text-emerald-700 mt-2 bg-emerald-50 px-2 py-1 rounded">
-            ✓ {syncResult.scraped} neue Rezepte importiert ({syncResult.discovered} gefunden)
+        {/* Import result flash */}
+        {importResult && (
+          <p className="text-xs text-emerald-700 mt-2 bg-emerald-50 px-2 py-1 rounded flex items-center gap-1.5">
+            <Check size={11} /> {importResult.imported} Rezept{importResult.imported !== 1 ? 'e' : ''} importiert
           </p>
         )}
       </div>
+
+      {/* Sync preview modal */}
+      {previews !== null && (
+        <SyncPreviewModal
+          source={source}
+          previews={previews}
+          totalDiscovered={totalDiscovered}
+          onClose={() => setPreviews(null)}
+          onImport={handleImport}
+          importing={importing}
+        />
+      )}
 
       {/* Login modal */}
       {showLoginModal && source.auth_config && (
